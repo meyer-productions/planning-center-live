@@ -23,8 +23,10 @@ login session that expires, no cookie banner.
   | **Hidden** | Nothing. |
 
 - Lower third: width, height, distance from bottom/sides, clock on/off.
-- Stage banner: height, white background, clock with/without seconds
-  (shares the distance from bottom/sides with the lower third).
+- Stage banner: width, height, distance from bottom/sides, white background,
+  clock with/without seconds.
+- Clock / timer box: size in %.
+- The properties only show the settings of the selected view.
 - Long item titles shrink (down to 60 %) before they are cut off.
 - Appearance: accent colour, warning threshold, next item, progress bar,
   "starts in" window, opaque background, German/English labels, canvas size.

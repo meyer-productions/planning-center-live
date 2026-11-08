@@ -82,7 +82,7 @@
     --k: 1;
     --sb-bg: rgba(12, 14, 18, .92); --sb-fg: #fff; --sb-muted: rgba(255,255,255,.62); --sb-line: rgba(255,255,255,.14);
     --sb-cell: rgba(255,255,255,.05);
-    position: absolute; left: var(--lt-side, 24px); right: var(--lt-side, 24px); bottom: var(--lt-bottom, 16px);
+    position: absolute; left: var(--sb-left, 24px); right: var(--sb-right, 24px); bottom: var(--sb-bottom, 16px);
     height: calc(240px * var(--k));
     display: flex; align-items: stretch; background: var(--sb-bg); color: var(--sb-fg);
     border-radius: calc(14px * var(--k)); overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.4);
@@ -156,7 +156,7 @@
   .sv-sub b { color: var(--fg); }
 
   /* ---------------- Clock ---------------- */
-  .ck-box { position: absolute; right: 72px; top: 60px; background: var(--bg); border-radius: 14px; overflow: hidden;
+  .ck-box { position: absolute; right: 72px; top: 60px; transform: scale(var(--box-scale, 1)); transform-origin: top right; background: var(--bg); border-radius: 14px; overflow: hidden;
             display: flex; align-items: stretch; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
   .ck-time { font-size: 64px; font-weight: 700; padding: 18px 34px; line-height: 1; display: flex; align-items: center; }
   .ck-item { padding: 16px 30px; border-left: 1px solid rgba(255,255,255,.12); display: flex; flex-direction: column; justify-content: center; max-width: 760px; }
@@ -165,7 +165,7 @@
   .ck-item[hidden] { display: none; }
 
   /* ---------------- Timer + clock: like "clock", but counter and clock swapped (counter big) ---------------- */
-  .tm-box { position: absolute; right: 72px; top: 60px; background: var(--bg); border-radius: 14px; overflow: hidden;
+  .tm-box { position: absolute; right: 72px; top: 60px; transform: scale(var(--box-scale, 1)); transform-origin: top right; background: var(--bg); border-radius: 14px; overflow: hidden;
             display: flex; align-items: stretch; box-shadow: 0 18px 50px rgba(0,0,0,.35);
             opacity: 0; transition: opacity .4s ease; }
   .tm-box.show { opacity: 1; }
@@ -676,7 +676,16 @@
     const inset = side + (1920 - 2 * side) * (1 - widthPct / 100) / 2;
     root.setProperty("--lt-left", inset + "px");
     root.setProperty("--lt-right", inset + "px");
-    root.setProperty("--lt-side", side + "px");
+    // stage banner: own distance / width / height (falls back to the lower third values of 1.1.0)
+    const num = (v, d) => (v == null || isNaN(v)) ? d : Number(v);
+    const sSide = num(cfg.stage_side, side);
+    const sWidth = Math.max(10, Math.min(100, num(cfg.stage_width, 100)));
+    const sInset = sSide + (1920 - 2 * sSide) * (1 - sWidth / 100) / 2;
+    root.setProperty("--sb-left", sInset + "px");
+    root.setProperty("--sb-right", sInset + "px");
+    root.setProperty("--sb-bottom", num(cfg.stage_bottom, num(cfg.lt_bottom, 16)) + "px");
+    // corner boxes (clock / timer): size in %
+    root.setProperty("--box-scale", Math.max(0.3, Math.min(3, num(cfg.box_scale, 100) / 100)));
     const sh = qs.get("stageheight") ? parseInt(qs.get("stageheight"), 10) : (cfg.stage_height || 240);
     $("sbBox").style.setProperty("--k", Math.max(0.4, sh / 240));
     $("sbBox").classList.toggle("light", qs.get("stagelight") ? qs.get("stagelight") === "1" : !!cfg.stage_light);

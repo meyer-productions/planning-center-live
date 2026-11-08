@@ -400,6 +400,10 @@ static void pco_update(void *data, obs_data_t *settings)
 	obs_data_set_int(c, "lt_height", obs_data_get_int(settings, "lt_height"));
 	obs_data_set_bool(c, "lt_clock", obs_data_get_bool(settings, "lt_clock"));
 	obs_data_set_int(c, "stage_height", obs_data_get_int(settings, "stage_height"));
+	obs_data_set_int(c, "stage_width", obs_data_get_int(settings, "stage_width"));
+	obs_data_set_int(c, "stage_bottom", obs_data_get_int(settings, "stage_bottom"));
+	obs_data_set_int(c, "stage_side", obs_data_get_int(settings, "stage_side"));
+	obs_data_set_int(c, "box_scale", obs_data_get_int(settings, "box_scale"));
 	obs_data_set_bool(c, "stage_light", obs_data_get_bool(settings, "stage_light"));
 	obs_data_set_bool(c, "stage_seconds", obs_data_get_bool(settings, "stage_seconds"));
 	obs_data_set_bool(c, "timer_clock", obs_data_get_bool(settings, "timer_clock"));
@@ -576,6 +580,10 @@ static void pco_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "lt_height", 64);
 	obs_data_set_default_bool(settings, "lt_clock", true);
 	obs_data_set_default_int(settings, "stage_height", 240);
+	obs_data_set_default_int(settings, "stage_width", 100);
+	obs_data_set_default_int(settings, "stage_bottom", 16);
+	obs_data_set_default_int(settings, "stage_side", 24);
+	obs_data_set_default_int(settings, "box_scale", 100);
 	obs_data_set_default_bool(settings, "stage_light", false);
 	obs_data_set_default_bool(settings, "stage_seconds", true);
 	obs_data_set_default_bool(settings, "timer_clock", true);
@@ -583,6 +591,19 @@ static void pco_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, "lang", "de");
 	obs_data_set_default_int(settings, "width", 1920);
 	obs_data_set_default_int(settings, "height", 1080);
+}
+
+/* only show the settings of the selected view */
+static bool view_modified(obs_properties_t *props, obs_property_t *, obs_data_t *settings)
+{
+	std::string v = obs_data_get_string(settings, "view");
+	if (v.empty())
+		v = "lowerthird";
+	obs_property_set_visible(obs_properties_get(props, "lowerthird"), v == "lowerthird");
+	obs_property_set_visible(obs_properties_get(props, "stage"), v == "stage");
+	obs_property_set_visible(obs_properties_get(props, "timer"), v == "timer" || v == "clock");
+	obs_property_set_visible(obs_properties_get(props, "timer_clock"), v == "timer");
+	return true;
 }
 
 static obs_properties_t *pco_properties(void *data)
@@ -596,6 +617,7 @@ static obs_properties_t *pco_properties(void *data)
 		std::string key = std::string("View.") + VIEWS[i];
 		obs_property_list_add_string(view, T(key.c_str()), VIEWS[i]);
 	}
+	obs_property_set_modified_callback(view, view_modified);
 
 	// lower third
 	obs_properties_t *lt = obs_properties_create();
@@ -608,13 +630,17 @@ static obs_properties_t *pco_properties(void *data)
 
 	// stage banner (uses distance bottom/sides of the lower third)
 	obs_properties_t *sb = obs_properties_create();
-	obs_properties_add_int_slider(sb, "stage_height", T("StageHeight"), 120, 480, 1);
+	obs_properties_add_int_slider(sb, "stage_width", T("LowerThirdWidth"), 20, 100, 1);
+	obs_properties_add_int_slider(sb, "stage_height", T("LowerThirdHeight"), 120, 480, 1);
+	obs_properties_add_int_slider(sb, "stage_bottom", T("LowerThirdBottom"), 0, 300, 1);
+	obs_properties_add_int_slider(sb, "stage_side", T("LowerThirdSide"), 0, 400, 1);
 	obs_properties_add_bool(sb, "stage_light", T("StageLight"));
 	obs_properties_add_bool(sb, "stage_seconds", T("StageSeconds"));
 	obs_properties_add_group(props, "stage", T("Group.Stage"), OBS_GROUP_NORMAL, sb);
 
 	// timer + clock
 	obs_properties_t *tmg = obs_properties_create();
+	obs_properties_add_int_slider(tmg, "box_scale", T("BoxScale"), 50, 250, 5);
 	obs_properties_add_bool(tmg, "timer_clock", T("TimerClock"));
 	obs_properties_add_group(props, "timer", T("Group.Timer"), OBS_GROUP_NORMAL, tmg);
 
