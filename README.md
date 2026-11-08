@@ -33,14 +33,41 @@ All views are laid out for 16:9 (1920×1080 by default).
 ## Installation
 
 Download the package for your system from
-[Releases](https://github.com/meyer-productions/planning-center-live/releases)
-and restart OBS afterwards. Requires **OBS Studio 31 or newer** (64-bit).
+[Releases](https://github.com/meyer-productions/planning-center-live/releases),
+install it and restart OBS. Requires **OBS Studio 31 or newer** (64-bit;
+on Linux the version the package was built for, currently 32+).
 
-| System | Package |
-|---|---|
-| Windows | `…-windows-x64-Installer.exe`, or extract `…-windows-x64.zip` into `C:\ProgramData\obs-studio\plugins\` |
-| macOS | `…-macos-universal.pkg` |
-| Ubuntu / Debian | `sudo apt install ./planning-center-live-…-x86_64-linux-gnu.deb` – for OBS from the official PPA (`ppa:obsproject/obs-studio`); the Flatpak version of OBS is not supported |
+### Windows
+
+Extract `planning-center-live-…-windows-x64.zip` into
+`C:\ProgramData\obs-studio\plugins\` (the result is
+`C:\ProgramData\obs-studio\plugins\planning-center-live\bin` and `\data`).
+
+### macOS
+
+Open `planning-center-live-…-macos-universal.pkg`. The package is not signed
+by Apple: if macOS blocks it, allow it under *System Settings → Privacy &
+Security → Open Anyway*.
+
+### Linux – OBS from the official PPA
+
+```bash
+sudo apt install ./planning-center-live-…-x86_64-linux-gnu.deb
+```
+
+### Linux – OBS as Flatpak
+
+The Flatpak loads plugins from its own config folder:
+
+```bash
+dpkg-deb -x planning-center-live-…-x86_64-linux-gnu.deb /tmp/pcl
+P=~/.var/app/com.obsproject.Studio/config/obs-studio/plugins/planning-center-live
+mkdir -p "$P/bin/64bit" "$P/data"
+cp /tmp/pcl/usr/lib/x86_64-linux-gnu/obs-plugins/planning-center-live.so "$P/bin/64bit/"
+cp -r /tmp/pcl/usr/share/obs/obs-plugins/planning-center-live/. "$P/data/"
+```
+
+Tested with the Flatpak OBS 33 (together with DistroAV).
 
 ## Setup
 
