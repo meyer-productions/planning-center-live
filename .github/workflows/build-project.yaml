@@ -136,6 +136,12 @@ jobs:
           notarizationUser: ${{ secrets.MACOS_NOTARIZATION_USERNAME }}
           notarizationPassword: ${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
 
+      - name: Cache OBS Dependencies 📦
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.deps
+          key: macos-build-deps-${{ hashFiles('buildspec.json', 'cmake/common/buildspec_common.cmake', 'cmake/common/pcl_download.cmake') }}
+
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:
@@ -282,6 +288,12 @@ jobs:
 
           "pluginName=${ProductName}" >> $env:GITHUB_OUTPUT
           "pluginVersion=${ProductVersion}" >> $env:GITHUB_OUTPUT
+
+      - name: Cache OBS Dependencies 📦
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.deps
+          key: windows-build-deps-${{ hashFiles('buildspec.json', 'cmake/common/buildspec_common.cmake', 'cmake/common/pcl_download.cmake') }}
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin

@@ -20,6 +20,11 @@ foreach(_pcl_attempt RANGE 1 6)
   set(_pcl_url "${url}")
   set(_pcl_headers)
 
+  # source archives (github.com/<repo>/archive/refs/tags/<tag>.zip|.tar.gz): same file from codeload
+  if(_pcl_attempt GREATER 1 AND url MATCHES "^https://github.com/([^/]+/[^/]+)/archive/(refs/tags/.+)\\.(zip|tar\\.gz)$")
+    set(_pcl_url "https://codeload.github.com/${CMAKE_MATCH_1}/${CMAKE_MATCH_3}/${CMAKE_MATCH_2}")
+  endif()
+
   if(_pcl_attempt GREATER 1 AND url MATCHES "^https://github.com/([^/]+/[^/]+)/releases/download/([^/]+)/(.+)$")
     set(_pcl_repo "${CMAKE_MATCH_1}")
     set(_pcl_tag "${CMAKE_MATCH_2}")
