@@ -45,7 +45,7 @@ set of API requests.
 
 ## Installation
 
-Download the installer for Windows (`.exe`/`.zip`) or macOS (`.pkg`) from the
+Download the package for Windows (`.exe`/`.zip`), macOS (`.pkg`) or Ubuntu/Debian (`.deb`) from the
 [Releases](https://github.com/meyer-productions/planning-center-live/releases)
 or from the build artifacts of the latest *Push* workflow run, install it and
 restart OBS (OBS 31 or newer).
@@ -71,11 +71,11 @@ service start, like in Planning Center.
 ## Building
 
 The plugin uses the official [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate).
-GitHub Actions builds Windows and macOS packages on every push to `main`; a tag
+GitHub Actions builds Windows, macOS and Ubuntu packages on every push to `main`; a tag
 like `1.0.0` creates a release. Local build: see the template documentation
 (Visual Studio 2022 + CMake 3.28 on Windows, Xcode on macOS).
 
-HTTP uses WinHTTP on Windows and the system libcurl on macOS; JSON is handled
+HTTP uses WinHTTP on Windows and the system libcurl on macOS/Linux; JSON is handled
 with libobs' `obs_data`, so there are no extra dependencies.
 
 ## Other folders
