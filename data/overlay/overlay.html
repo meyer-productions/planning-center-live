@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Planning Center Live Overlay</title>
+<!--
+  Planning Center Live – OBS overlay (1920x1080 browser source)
+  URL parameters:
+    view=active|lowerthird|countdown|list|service|clock|off   (default: active = follows OBS/hotkeys)
+    accent=%23e4002b   override accent color
+    scale=1.0          fixed scale (default: fit to window – 1.0 in a 1920x1080 source)
+    bg=1               opaque background (for a confidence monitor / separate screen)
+-->
+<style>
+  :root {
+    --accent: #e4002b;
+    --bg: rgba(12, 14, 18, .86);
+    --bg-solid: #0c0e12;
+    --fg: #ffffff;
+    --muted: rgba(255, 255, 255, .62);
+    --warn: #ffb020;
+    --over: #ff3b3b;
+    --ok: #3ddc84;
+    --scale: 1;
+    --font: "Segoe UI Variable Display", "Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; width: 100%; height: 100%; overflow: hidden;
+    background: transparent; color: var(--fg); font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+  body.opaque { background: var(--bg-solid); }
+  /* the layout is designed for 1920x1080 and scaled to the window (1.0 in a 1920x1080 OBS source) */
+  #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px;
+           transform: scale(var(--scale)); transform-origin: 0 0; }
+  .view { position: absolute; inset: 0; opacity: 0; visibility: hidden;
+          transition: opacity .45s ease, visibility 0s linear .45s; }
+  .view.on { opacity: 1; visibility: visible; transition: opacity .45s ease; }
+  .mono { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+  .warn { color: var(--warn) !important; }
+  .over { color: var(--over) !important; }
+
+  /* ---------------- Lower third ---------------- */
+  #lt { }
+  /* slim single-line bar, as low as possible (margins adjustable via ltbottom / ltside) */
+  .lt-box {
+    position: absolute; left: var(--lt-side, 40px); right: var(--lt-side, 40px); bottom: var(--lt-bottom, 16px); height: 64px;
+    display: flex; align-items: stretch; background: var(--bg); border-radius: 8px;
+    overflow: hidden; box-shadow: 0 8px 28px rgba(0,0,0,.35);
+    transform: translateY(24px); opacity: 0;
+    transition: transform .5s cubic-bezier(.2,.8,.2,1), opacity .5s ease;
+  }
+  #lt.on .lt-box.show { transform: none; opacity: 1; }
+  .lt-accent { width: 6px; background: var(--accent); flex: none; }
+  .lt-main { flex: 1; min-width: 0; padding: 0 24px; display: flex; align-items: center; gap: 18px; white-space: nowrap; }
+  .lt-label { flex: none; font-size: 17px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+  .lt-title { flex: 0 1 auto; min-width: 0; font-size: 32px; font-weight: 650; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; }
+  .lt-next { flex: 0 10000 auto; min-width: 0; font-size: 21px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+             padding-left: 18px; border-left: 1px solid rgba(255,255,255,.18); }
+  .lt-next:empty { display: none; }
+  .lt-next b { color: var(--fg); font-weight: 600; }
+  .lt-timer { flex: none; padding: 0 24px; display: flex; align-items: center; gap: 12px;
+              border-left: 1px solid rgba(255,255,255,.12); }
+  .lt-time { font-size: 42px; font-weight: 700; line-height: 1; min-width: 3.2ch; text-align: right; }
+  .lt-sub { font-size: 15px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; order: -1; }
+  .lt-progress { position: absolute; left: 6px; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.1); }
+  .lt-progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 1s linear; }
+  .lt-progress.warn i { background: var(--warn); }
+  .lt-progress.over i { background: var(--over); }
+
+  /* ---------------- Big countdown ---------------- */
+  #cd { display: flex; align-items: center; justify-content: center; }
+  .cd-wrap { text-align: center; padding: 60px 120px; border-radius: 28px; background: var(--bg); min-width: 1100px; }
+  body.opaque .cd-wrap { background: transparent; }
+  .cd-title { font-size: 64px; font-weight: 650; max-width: 1600px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cd-time { font-size: 300px; font-weight: 750; line-height: 1; margin: 18px 0; }
+  .cd-next { font-size: 40px; color: var(--muted); }
+  .cd-next b { color: var(--fg); font-weight: 600; }
+  .cd-bar { height: 14px; background: rgba(255,255,255,.12); border-radius: 7px; overflow: hidden; margin-top: 34px; }
+  .cd-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 1s linear; }
+
+  /* ---------------- Run sheet ---------------- */
+  #ls { padding: 60px 90px; }
+  .ls-panel { height: 100%; background: var(--bg); border-radius: 22px; padding: 40px 54px; display: flex; flex-direction: column; }
+  body.opaque .ls-panel { background: #15181e; }
+  .ls-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 40px;
+             padding-bottom: 24px; border-bottom: 2px solid rgba(255,255,255,.12); }
+  .ls-plan { font-size: 46px; font-weight: 700; }
+  .ls-dates { font-size: 26px; color: var(--muted); margin-top: 4px; }
+  .ls-clock { text-align: right; }
+  .ls-clock .t { font-size: 64px; font-weight: 700; line-height: 1; }
+  .ls-clock .s { font-size: 22px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  .ls-list { flex: 1; overflow: hidden; position: relative; margin-top: 16px; }
+  .ls-scroll { position: absolute; left: 0; right: 0; top: 0; transition: transform .6s cubic-bezier(.2,.8,.2,1); }
+  .row { display: flex; align-items: center; gap: 26px; padding: 16px 22px; border-radius: 12px; font-size: 34px; }
+  .row .tm { width: 120px; color: var(--muted); font-size: 28px; flex: none; }
+  .row .ti { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .ky { color: var(--muted); font-size: 26px; flex: none; }
+  .row .ln { width: 150px; text-align: right; color: var(--muted); flex: none; }
+  .row.header { font-size: 24px; font-weight: 700; text-transform: uppercase; letter-spacing: .14em; color: var(--accent);
+                padding-top: 26px; padding-bottom: 6px; }
+  .row.done { opacity: .38; }
+  .row.current { background: var(--accent); }
+  .row.current .tm, .row.current .ln, .row.current .ky { color: rgba(255,255,255,.9); }
+  .row.current .ln { font-weight: 700; color: #fff; }
+
+  /* ---------------- Service countdown ---------------- */
+  #sv { display: flex; align-items: center; justify-content: center; }
+  .sv-wrap { text-align: center; padding: 70px 140px; border-radius: 28px; background: var(--bg); }
+  body.opaque .sv-wrap { background: transparent; }
+  .sv-label { font-size: 44px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
+  .sv-time { font-size: 260px; font-weight: 750; line-height: 1; margin: 20px 0 10px; }
+  .sv-sub { font-size: 40px; color: var(--muted); }
+  .sv-sub b { color: var(--fg); }
+
+  /* ---------------- Clock ---------------- */
+  .ck-box { position: absolute; right: 72px; top: 60px; background: var(--bg); border-radius: 14px; overflow: hidden;
+            display: flex; align-items: stretch; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+  .ck-time { font-size: 64px; font-weight: 700; padding: 18px 34px; line-height: 1; display: flex; align-items: center; }
+  .ck-item { padding: 16px 30px; border-left: 1px solid rgba(255,255,255,.12); display: flex; flex-direction: column; justify-content: center; max-width: 760px; }
+  .ck-item .a { font-size: 28px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ck-item .b { font-size: 34px; font-weight: 700; }
+  .ck-item[hidden] { display: none; }
+
+  /* ---------------- Status (only shown when something is wrong) ---------------- */
+  #status { position: absolute; left: 24px; top: 24px; padding: 10px 18px; border-radius: 10px;
+            background: rgba(200, 30, 30, .9); font-size: 22px; display: none; }
+  #status.show { display: block; }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- Lower third -->
+  <section class="view" id="lt">
+    <div class="lt-box" id="ltBox">
+      <div class="lt-accent"></div>
+      <div class="lt-main">
+        <div class="lt-label" id="ltLabel">Jetzt</div>
+        <div class="lt-title" id="ltTitle">–</div>
+        <div class="lt-next" id="ltNext"></div>
+      </div>
+      <div class="lt-timer">
+        <div class="lt-time mono" id="ltTime">0:00</div>
+        <div class="lt-sub" id="ltSub">verbleibend</div>
+      </div>
+      <div class="lt-progress" id="ltProg"><i></i></div>
+    </div>
+  </section>
+
+  <!-- Big countdown -->
+  <section class="view" id="cd">
+    <div class="cd-wrap">
+      <div class="cd-title" id="cdTitle">–</div>
+      <div class="cd-time mono" id="cdTime">0:00</div>
+      <div class="cd-next" id="cdNext"></div>
+      <div class="cd-bar" id="cdBar"><i></i></div>
+    </div>
+  </section>
+
+  <!-- Run sheet -->
+  <section class="view" id="ls">
+    <div class="ls-panel">
+      <div class="ls-head">
+        <div>
+          <div class="ls-plan" id="lsPlan">–</div>
+          <div class="ls-dates" id="lsDates"></div>
+        </div>
+        <div class="ls-clock">
+          <div class="t mono" id="lsTime">0:00</div>
+          <div class="s" id="lsSub"></div>
+        </div>
+      </div>
+      <div class="ls-list"><div class="ls-scroll" id="lsScroll"></div></div>
+    </div>
+  </section>
+
+  <!-- Service countdown -->
+  <section class="view" id="sv">
+    <div class="sv-wrap">
+      <div class="sv-label" id="svLabel">Beginn in</div>
+      <div class="sv-time mono" id="svTime">0:00</div>
+      <div class="sv-sub" id="svSub"></div>
+    </div>
+  </section>
+
+  <!-- Clock -->
+  <section class="view" id="ck">
+    <div class="ck-box">
+      <div class="ck-time mono" id="ckTime">00:00</div>
+      <div class="ck-item" id="ckItem" hidden>
+        <div class="a" id="ckTitle"></div>
+        <div class="b mono" id="ckRemain"></div>
+      </div>
+    </div>
+  </section>
+
+  <div id="status"></div>
+</div>
+
+<script>
+(() => {
+  const qs = new URLSearchParams(location.search);
+  const fixedView = (qs.get("view") || "active").toLowerCase();
+  if (qs.get("ltbottom")) document.documentElement.style.setProperty("--lt-bottom", parseInt(qs.get("ltbottom"), 10) + "px");
+  if (qs.get("ltside")) document.documentElement.style.setProperty("--lt-side", parseInt(qs.get("ltside"), 10) + "px");
+  const fixedScale = parseFloat(qs.get("scale"));
+  function fit() {
+    const sc = fixedScale > 0 ? fixedScale : Math.min(innerWidth / 1920, innerHeight / 1080) || 1;
+    document.documentElement.style.setProperty("--scale", sc);
+  }
+  fit();
+  addEventListener("resize", fit);
+  if (qs.get("bg") === "1") document.body.classList.add("opaque");
+  const accentOverride = qs.get("accent");
+
+  const I18N = {
+    de: { now: "Jetzt", next: "Danach:", left: "verbleibend", over: "überzogen", since: "läuft seit",
+          service: "Gottesdienst", startsAt: "Beginn um", start: "Beginn", toStart: "bis Beginn", startsIn: "beginnt in",
+          noPlan: "Kein Plan", time: "Uhrzeit", plannedEnd: "Geplantes Ende", noServer: "keine Daten" },
+    en: { now: "Now", next: "Next:", left: "remaining", over: "over time", since: "running for",
+          service: "Service", startsAt: "Starts at", start: "Start", toStart: "to start", startsIn: "starts in",
+          noPlan: "No plan", time: "Time", plannedEnd: "Planned end", noServer: "no data" },
+  };
+  let lang = (qs.get("lang") || "de").toLowerCase();
+  const tr = k => (I18N[lang] || I18N.de)[k] || k;
+
+  const $ = id => document.getElementById(id);
+  const VIEWS = { lowerthird: "lt", countdown: "cd", list: "ls", service: "sv", clock: "ck" };
+
+  let state = null;
+  let clockOffset = 0;      // server time - local time
+  let failCount = 0;
+
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const now = () => Date.now() + clockOffset;
+
+  function fmt(sec, { sign = false } = {}) {
+    const neg = sec < 0;
+    let s = Math.abs(Math.round(sec));
+    const h = Math.floor(s / 3600); s -= h * 3600;
+    const m = Math.floor(s / 60); s -= m * 60;
+    const body = h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+    return (neg ? "+" : (sign ? "" : "")) + body;
+  }
+  const hhmm = ms => new Date(ms).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
+  const len = s => s ? fmt(s) : "";
+
+  async function poll() {
+    try {
+      const t0 = Date.now();
+      const r = await fetch("/state", { cache: "no-store" });
+      const s = await r.json();
+      const t1 = Date.now();
+      clockOffset = s.now - (t0 + t1) / 2;
+      state = s;
+      failCount = 0;
+    } catch (e) {
+      failCount++;
+    }
+  }
+
+  /** Remaining seconds of the current item (negative = overtime). */
+  function itemTiming(cur) {
+    if (!cur || !cur.start) return null;
+    const elapsed = (now() - cur.start) / 1000;
+    if (!cur.length) return { elapsed, remaining: null, pct: 0 };
+    const remaining = cur.length - elapsed;
+    return { elapsed, remaining, pct: Math.max(0, Math.min(100, elapsed / cur.length * 100)) };
+  }
+
+  function timeClass(rem, warn) {
+    if (rem == null) return "";
+    if (rem < 0) return "over";
+    if (rem <= warn) return "warn";
+    return "";
+  }
+
+  function setCls(el, cls) {
+    el.classList.remove("warn", "over");
+    if (cls) el.classList.add(cls);
+  }
+
+  /** Pre-service: next service start within the configured window. */
+  function preService(s) {
+    const up = s.live && s.live.upcoming_service;
+    if (!up || !up.starts_at) return null;
+    const secs = (up.starts_at - now()) / 1000;
+    const winMin = s.config ? s.config.preservice_minutes : 30;
+    if (secs < 0 || secs > winMin * 60) return null;
+    return { secs, svc: up };
+  }
+
+  function renderLowerThird(s) {
+    const cfg = s.config || {};
+    const box = $("ltBox");
+    const live = s.live || {};
+    const cur = live.current;
+    const pre = preService(s);
+    let show = false;
+
+    if (live.active && cur) {
+      show = true;
+      const t = itemTiming(cur);
+      $("ltLabel").textContent = tr("now");
+      $("ltTitle").textContent = cur.title || "–";
+      const nx = live.next;
+      $("ltNext").innerHTML = cfg.show_next && nx ? `${tr("next")} <b>${esc(nx.title)}</b>${nx.length ? " · " + len(nx.length) : ""}` : "";
+      if (t && t.remaining != null) {
+        $("ltTime").textContent = fmt(t.remaining);
+        $("ltSub").textContent = t.remaining < 0 ? tr("over") : tr("left");
+        const c = timeClass(t.remaining, cfg.warn_seconds);
+        setCls($("ltTime"), c); setCls($("ltProg"), c);
+        $("ltProg").querySelector("i").style.width = t.pct + "%";
+      } else {
+        $("ltTime").textContent = t ? fmt(t.elapsed) : "–";
+        $("ltSub").textContent = tr("since");
+        setCls($("ltTime"), ""); setCls($("ltProg"), "");
+        $("ltProg").querySelector("i").style.width = "0%";
+      }
+      $("ltProg").style.display = cfg.show_progress ? "" : "none";
+    } else if (pre) {
+      show = true;
+      $("ltLabel").textContent = pre.svc.name || tr("service");
+      $("ltTitle").textContent = tr("startsAt") + " " + hhmm(pre.svc.starts_at);
+      $("ltNext").innerHTML = s.plan && (s.plan.title || s.plan.series_title) ? esc([s.plan.series_title, s.plan.title].filter(Boolean).join(" – ")) : "";
+      $("ltTime").textContent = fmt(pre.secs);
+      $("ltSub").textContent = tr("toStart");
+      setCls($("ltTime"), ""); setCls($("ltProg"), "");
+      $("ltProg").style.display = "none";
+    }
+    box.classList.toggle("show", show);
+  }
+
+  function renderCountdown(s) {
+    const cfg = s.config || {};
+    const live = s.live || {};
+    const cur = live.current;
+    const pre = preService(s);
+    if (live.active && cur) {
+      const t = itemTiming(cur);
+      $("cdTitle").textContent = cur.title || "–";
+      if (t && t.remaining != null) {
+        $("cdTime").textContent = fmt(t.remaining);
+        setCls($("cdTime"), timeClass(t.remaining, cfg.warn_seconds));
+        $("cdBar").querySelector("i").style.width = t.pct + "%";
+      } else {
+        $("cdTime").textContent = t ? fmt(t.elapsed) : "–";
+        setCls($("cdTime"), "");
+        $("cdBar").querySelector("i").style.width = "0%";
+      }
+      $("cdBar").style.display = cfg.show_progress ? "" : "none";
+      const nx = live.next;
+      $("cdNext").innerHTML = cfg.show_next && nx ? `${tr("next")} <b>${esc(nx.title)}</b>` : "";
+    } else if (pre) {
+      $("cdTitle").textContent = (pre.svc.name || tr("service")) + " " + tr("startsIn");
+      $("cdTime").textContent = fmt(pre.secs);
+      setCls($("cdTime"), "");
+      $("cdNext").textContent = tr("startsAt") + " " + hhmm(pre.svc.starts_at);
+      $("cdBar").style.display = "none";
+    } else {
+      $("cdTitle").textContent = s.plan ? (s.plan.title || s.plan.series_title || "Planning Center") : tr("noPlan");
+      $("cdTime").textContent = "–:––";
+      setCls($("cdTime"), "");
+      $("cdNext").textContent = s.plan ? s.plan.dates : "";
+      $("cdBar").style.display = "none";
+    }
+  }
+
+  let lastListKey = "";
+  function renderList(s) {
+    const cfg = s.config || {};
+    const plan = s.plan || {};
+    $("lsPlan").textContent = [plan.series_title, plan.title].filter(Boolean).join(" – ") || "Planning Center";
+    $("lsDates").textContent = plan.dates || "";
+    const live = s.live || {};
+    const t = itemTiming(live.current);
+    const pre = preService(s);
+    if (t && t.remaining != null) {
+      $("lsTime").textContent = fmt(t.remaining);
+      $("lsSub").textContent = t.remaining < 0 ? tr("over") : tr("left");
+      setCls($("lsTime"), timeClass(t.remaining, cfg.warn_seconds));
+    } else if (t) {
+      $("lsTime").textContent = fmt(t.elapsed); $("lsSub").textContent = tr("since"); setCls($("lsTime"), "");
+    } else if (pre) {
+      $("lsTime").textContent = fmt(pre.secs); $("lsSub").textContent = tr("toStart"); setCls($("lsTime"), "");
+    } else {
+      $("lsTime").textContent = new Date(now()).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
+      $("lsSub").textContent = tr("time"); setCls($("lsTime"), "");
+    }
+
+    const items = s.items || [];
+    const key = JSON.stringify(items.map(i => [i.id, i.status, i.title, i.length, i.planned_start]));
+    if (key !== lastListKey) {
+      lastListKey = key;
+      $("lsScroll").innerHTML = items.map(i => i.type === "header"
+        ? `<div class="row header">${esc(i.title)}</div>`
+        : `<div class="row ${i.status}" data-id="${esc(i.id)}">
+             <span class="tm mono">${i.planned_start ? hhmm(i.planned_start) : ""}</span>
+             <span class="ti">${esc(i.title)}</span>
+             <span class="ky">${esc(i.key)}</span>
+             <span class="ln mono">${len(i.length)}</span>
+           </div>`).join("");
+    }
+    // live remaining time in the current row + keep it in view
+    const row = $("lsScroll").querySelector(".row.current");
+    if (row) {
+      if (t && t.remaining != null) row.querySelector(".ln").textContent = fmt(t.remaining);
+      const target = Math.max(0, row.offsetTop - 160);
+      $("lsScroll").style.transform = `translateY(${-target}px)`;
+    } else {
+      $("lsScroll").style.transform = "translateY(0)";
+    }
+  }
+
+  function renderService(s) {
+    const live = s.live || {};
+    const up = live.upcoming_service;
+    const run = live.service;
+    // LIVE is often started during the pre-service items -> elapsed time counts from the scheduled start
+    if (live.active && run && run.starts_at && now() >= run.starts_at) {
+      $("svLabel").textContent = (run.name || tr("service")) + " " + tr("since");
+      $("svTime").textContent = fmt((now() - run.starts_at) / 1000);
+      $("svSub").innerHTML = run.ends_at ? `${tr("plannedEnd")} <b>${hhmm(run.ends_at)}</b>` : "";
+    } else if (live.active && run && run.starts_at) {
+      $("svLabel").textContent = (run.name || tr("service")) + " " + tr("startsIn");
+      $("svTime").textContent = fmt((run.starts_at - now()) / 1000);
+      $("svSub").innerHTML = `${tr("start")} <b>${hhmm(run.starts_at)}</b>`;
+    } else if (up && up.starts_at) {
+      const secs = (up.starts_at - now()) / 1000;
+      $("svLabel").textContent = (up.name || tr("service")) + " " + tr("startsIn");
+      $("svTime").textContent = fmt(Math.max(0, secs));
+      $("svSub").innerHTML = `${tr("start")} <b>${hhmm(up.starts_at)}</b>`;
+    } else {
+      $("svLabel").textContent = s.plan ? (s.plan.title || "Planning Center") : tr("noPlan");
+      $("svTime").textContent = new Date(now()).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
+      $("svSub").textContent = s.plan ? s.plan.dates : "";
+    }
+  }
+
+  function renderClock(s) {
+    const cfg = s.config || {};
+    $("ckTime").textContent = new Date(now()).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const live = s.live || {};
+    const t = itemTiming(live.current);
+    if (live.active && live.current) {
+      $("ckItem").hidden = false;
+      $("ckTitle").textContent = live.current.title;
+      $("ckRemain").textContent = t && t.remaining != null ? fmt(t.remaining) : (t ? fmt(t.elapsed) : "");
+      setCls($("ckRemain"), t ? timeClass(t.remaining, cfg.warn_seconds) : "");
+    } else {
+      $("ckItem").hidden = true;
+    }
+  }
+
+  function render() {
+    const s = state;
+    const st = $("status");
+    if (!s) { requestAnimationFrame(render); return; }
+    if (accentOverride) document.documentElement.style.setProperty("--accent", accentOverride);
+    else if (s.config && s.config.accent) document.documentElement.style.setProperty("--accent", s.config.accent);
+
+    const view = fixedView === "active" ? s.view : fixedView;
+    for (const [k, id] of Object.entries(VIEWS)) $(id).classList.toggle("on", k === view);
+
+    // errors are only shown on an opaque/monitor view or in the list – never on the program feed lower third
+    const err = failCount > 3 ? tr("noServer") : (!s.ok ? s.error : "");
+    st.textContent = err ? "Planning Center: " + err : "";
+    st.classList.toggle("show", !!err && (document.body.classList.contains("opaque") || view === "list"));
+
+    if (view === "lowerthird") renderLowerThird(s);
+    else if (view === "countdown") renderCountdown(s);
+    else if (view === "list") renderList(s);
+    else if (view === "service") renderService(s);
+    else if (view === "clock") renderClock(s);
+  }
+
+  /* settings that come from the OBS source (plugin) or the Python script */
+  function applyConfig(cfg) {
+    if (!cfg) return;
+    const root = document.documentElement.style;
+    if (!qs.get("ltbottom") && cfg.lt_bottom != null) root.setProperty("--lt-bottom", cfg.lt_bottom + "px");
+    if (!qs.get("ltside") && cfg.lt_side != null) root.setProperty("--lt-side", cfg.lt_side + "px");
+    if (qs.get("bg") !== "1") document.body.classList.toggle("opaque", !!cfg.opaque);
+    if (!qs.get("lang") && cfg.lang) lang = cfg.lang;
+  }
+
+  /* OBS plugin: the source pushes {state, view, config, now} as a JS event – no server, no polling */
+  let lastEvent = 0;
+  window.addEventListener("pcoLiveState", e => {
+    const p = e.detail || {};
+    state = Object.assign({}, p.state || {}, { view: p.view, config: p.config || {}, now: p.now });
+    if (p.now) clockOffset = p.now - Date.now();
+    lastEvent = Date.now();
+    failCount = 0;
+  });
+
+  /* Python script / browser: poll the local server; stops as soon as plugin events arrive */
+  const servedByScript = location.protocol.startsWith("http") && location.hostname !== "absolute";
+  if (servedByScript) {
+    poll();
+    setInterval(() => { if (Date.now() - lastEvent > 3000) poll(); }, 500);
+  } else {
+    setInterval(() => { if (lastEvent && Date.now() - lastEvent > 5000) failCount = 99; }, 1000);
+  }
+  setInterval(() => { if (state) applyConfig(state.config); render(); }, 200);
+})();
+</script>
+</body>
+</html>
