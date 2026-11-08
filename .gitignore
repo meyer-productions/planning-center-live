@@ -3,16 +3,10 @@
 
 # Except for default project files
 !/.github
-!/build-aux
 !/cmake
 !/data
 !/src
-!/legacy
-!/python-script
-!.clang-format
-!.gersemirc
 !.gitignore
-!.env.example
 !buildspec.json
 !CMakeLists.txt
 !CMakePresets.json
@@ -27,8 +21,4 @@
 
 # Exclude CMake build number cache
 /cmake/.CMakeBuildNumber
-
-# Python
-__pycache__/
-*.pyc
 .env

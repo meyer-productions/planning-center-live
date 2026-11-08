@@ -1,89 +1,94 @@
 # Planning Center Live for OBS
 
-Native OBS plugin that shows **Planning Center Services LIVE** directly in OBS.
-It talks to the Planning Center API with a Personal Access Token – no browser
-login, no expiring session cookies, no cookie banner.
+An OBS Studio plugin that shows **Planning Center Services LIVE** directly in
+OBS – a countdown lower third, a big countdown, the run sheet, a service
+countdown and a clock.
 
-Add the source **Planning Center Live** to a scene and pick the view in its
-properties:
+It reads the Planning Center API with a Personal Access Token. No browser, no
+login session that expires, no cookie banner.
 
-| View | |
-|---|---|
-| **Lower third – countdown** (default) | Slim single-line bar at the very bottom: current item, next item, remaining time, progress. Amber below the warning threshold, red `+m:ss` when the item runs over. Before the service it shows "starts in"; otherwise it hides itself. |
-| **Big countdown** | Remaining time of the current item, large (stage / confidence monitor). |
-| **Run sheet** | Like PCO LIVE: planned start times, keys, lengths, current item highlighted, auto-scroll. |
-| **Service countdown** | Countdown to the service start, then elapsed time and planned end. |
-| **Clock** | Small clock plus current item and remaining time. |
-| **Hidden** | Nothing. |
+## Features
 
-All views are laid out for 16:9 (1920×1080 by default, size configurable).
+- **Source "Planning Center Live"** with switchable views:
 
-## Source properties
+  | View | |
+  |---|---|
+  | **Lower third – countdown** (default) | Slim bar at the bottom edge: current item, next item, remaining time, progress bar and a clock on the right. Amber below the warning threshold, red `+m:ss` when the item runs over. Before the service it shows "starts in", otherwise it hides itself. |
+  | **Big countdown** | Remaining time of the current item, large (stage / confidence monitor). |
+  | **Run sheet** | Like PCO LIVE: planned start times, keys, lengths, current item highlighted, auto-scroll. |
+  | **Service countdown** | Countdown to the service start, then elapsed time and planned end. |
+  | **Clock** | Clock plus current item and remaining time. |
+  | **Hidden** | Nothing. |
 
-- **View** – the views above.
-- **Appearance** – accent colour, warning threshold, show next item / progress
-  bar, "starts in" window, lower third distance from bottom and sides, opaque
-  background (for a confidence monitor), overlay language (German / English),
-  width/height.
-- **Planning Center connection** – Application ID + Secret, service type
-  (button *Load service types*), optional fixed plan ID, poll interval, demo
-  mode, status. The connection is remembered: new sources start with the
-  last used token and service type.
+- Lower third: width, height, distance from bottom/sides, clock on/off.
+- Appearance: accent colour, warning threshold, next item, progress bar,
+  "starts in" window, opaque background, German/English labels, canvas size.
+- Several sources at the same time (e.g. lower third on the program, run sheet
+  on the multiview) – they share one connection.
+- Hotkeys per source for every view and "next view".
+- Remote switching via obs-websocket (e.g. Bitfocus Companion / Stream Deck).
 
-### Switching views
-
-- per source in the properties,
-- **hotkeys** per source (*Settings → Hotkeys → [source name]*: one per view + *next view*),
-- remotely via obs-websocket (e.g. Bitfocus Companion / Stream Deck):
-  `SetInputSettings` with `{"inputName": "Planning Center Live", "inputSettings": {"view": "countdown"}}`.
-
-Valid view values: `lowerthird`, `countdown`, `list`, `service`, `clock`, `off`.
-
-Several sources can run at the same time (e.g. lower third on the program
-feed, run sheet on a multiview). Sources with the same connection share one
-set of API requests.
+All views are laid out for 16:9 (1920×1080 by default).
 
 ## Installation
 
-Download the package for Windows (`.exe`/`.zip`), macOS (`.pkg`) or Ubuntu/Debian (`.deb`) from the
+Download the package for your system from
 [Releases](https://github.com/meyer-productions/planning-center-live/releases)
-or from the build artifacts of the latest *Push* workflow run, install it and
-restart OBS (OBS 31 or newer).
+and restart OBS afterwards. Requires **OBS Studio 31 or newer** (64-bit).
 
-Create a Personal Access Token at
-<https://api.planningcenteronline.com/oauth/applications> → *Personal Access Tokens*.
+| System | Package |
+|---|---|
+| Windows | `…-windows-x64-Installer.exe`, or extract `…-windows-x64.zip` into `C:\ProgramData\obs-studio\plugins\` |
+| macOS | `…-macos-universal.pkg` |
+| Ubuntu / Debian | `sudo apt install ./planning-center-live-…-x86_64-linux-gnu.deb` – for OBS from the official PPA (`ppa:obsproject/obs-studio`); the Flatpak version of OBS is not supported |
+
+## Setup
+
+1. Create a **Personal Access Token** at
+   <https://api.planningcenteronline.com/oauth/applications> → *Personal Access Tokens*.
+2. In OBS: **Tools → Planning Center Live settings**
+   - enter *Application ID* and *Secret*,
+   - click *Load service types* and choose your service type,
+   - optional: fixed plan ID, poll interval (default 2 s), demo mode.
+3. Add the source **Planning Center Live** to a scene and choose the view in its properties.
+
+The plugin picks the plan automatically: the latest plan stays selected for
+3 hours after its last service time, otherwise the next upcoming plan.
+
+## Switching views remotely
+
+Every view is a source setting, so obs-websocket can switch it, e.g. from
+Bitfocus Companion with a custom request:
+
+```json
+{ "requestType": "SetInputSettings",
+  "requestData": { "inputName": "Planning Center Live", "inputSettings": { "view": "countdown" } } }
+```
+
+View values: `lowerthird`, `countdown`, `list`, `service`, `clock`, `off`.
 
 ## How it works
 
-- `GET /services/v2/service_types/{id}/plans?filter=past|future` – picks the plan
-  (the latest plan stays selected for 3 hours after its last service time)
-- `GET …/plans/{id}/items` + `…/plan_times` – run sheet and service times (every 30 s)
+- `GET /services/v2/service_types/{id}/plans` – plan selection
+- `GET …/plans/{id}/items` and `…/plan_times` – run sheet and service times (every 30 s)
 - `GET …/plans/{id}/live?include=current_item_time,next_item_time` – LIVE state
-  (every poll, default 2 s; PCO allows 100 requests per 20 s)
-- Remaining time = `live_start_at` of the current item + item length − now.
-- The source renders a private browser source with the bundled
-  `data/overlay/overlay.html` and pushes the state into it with the browser
-  source's `javascript_event` procedure. Between polls the page counts down locally.
+  (every poll; Planning Center allows 100 requests per 20 s)
+- Remaining time = start of the current item in LIVE + item length − now;
+  between polls the overlay counts down locally.
+- Pre-service items are scheduled backwards from the service start, like in Planning Center.
 
-Pre-service items (`service_position = pre`) are scheduled backwards from the
-service start, like in Planning Center.
+The source renders a private OBS browser source with the bundled
+`data/overlay/overlay.html` and pushes the data into it – no web server.
 
 ## Building
 
-The plugin uses the official [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate).
-GitHub Actions builds Windows, macOS and Ubuntu packages on every push to `main`; a tag
-like `1.0.0` creates a release. Local build: see the template documentation
-(Visual Studio 2022 + CMake 3.28 on Windows, Xcode on macOS).
+Based on the official [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate).
+GitHub Actions builds Windows, macOS and Ubuntu packages on every push to `main`;
+pushing a version tag (e.g. `1.0.1`) creates a draft release with all packages.
 
-HTTP uses WinHTTP on Windows and the system libcurl on macOS/Linux; JSON is handled
-with libobs' `obs_data`, so there are no extra dependencies.
-
-## Other folders
-
-- [`python-script/`](python-script/) – the earlier OBS Python script version
-  (overlay via a local web server, also usable without OBS for testing).
-- [`legacy/`](legacy/) – the original Linux script that opened PCO LIVE in Firefox kiosk mode.
+No extra dependencies: HTTP via WinHTTP (Windows) / libcurl (macOS, Linux),
+JSON via libobs.
 
 ## License
 
-GPL-2.0 (required for OBS plugins) – meyer.productions
+GPL-2.0 – © meyer.productions
