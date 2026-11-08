@@ -74,6 +74,8 @@ jobs:
   macos-build:
     name: Build for macOS 🍏
     runs-on: macos-15
+    env:
+      GITHUB_TOKEN: ${{ github.token }} # obs-deps download fallback via GitHub API
     needs: check-event
     defaults:
       run:
@@ -181,6 +183,8 @@ jobs:
       matrix:
         os: [ubuntu-24.04]
     runs-on: ${{ matrix.os }}
+    env:
+      GITHUB_TOKEN: ${{ github.token }} # obs-deps download fallback via GitHub API
     needs: check-event
     defaults:
       run:
@@ -252,6 +256,8 @@ jobs:
   windows-build:
     name: Build for Windows 🪟
     runs-on: windows-2022
+    env:
+      GITHUB_TOKEN: ${{ github.token }} # obs-deps download fallback via GitHub API
     needs: check-event
     defaults:
       run:
