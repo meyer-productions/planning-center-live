@@ -13,21 +13,28 @@ the Free Software Foundation; either version 2 of the License, or
  * the bundled overlay (data/overlay/overlay.html). The plugin polls the
  * Planning Center API itself and pushes the state into the page with the
  * browser source's "javascript_event" procedure – no web server, no cookies.
+ *
+ * The Planning Center connection is global (Tools -> Planning Center Live
+ * settings, like the DistroAV settings) and shared by all sources; the source
+ * properties only contain the view and its appearance.
  */
 
 #include "pco-data.hpp"
 
 #include <obs-module.h>
+#include <obs-frontend-api.h>
 #include <callback/calldata.h>
 #include <util/platform.h>
 #include <plugin-support.h>
 
+#include <atomic>
 #include <cstdio>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #define SOURCE_ID "planning_center_live_source"
+#define SETTINGS_ID "planning_center_live_settings"
 #define T(x) obs_module_text(x)
 
 static const char *VIEWS[] = {"lowerthird", "countdown", "list", "service", "clock", "off"};
@@ -35,12 +42,15 @@ static const size_t VIEW_COUNT = sizeof(VIEWS) / sizeof(VIEWS[0]);
 static const unsigned DEFAULT_ACCENT = 0xFF2B00E4; // #e4002b in OBS ABGR
 
 /* ------------------------------------------------------------------------ */
-/* shared connection defaults (so a second source does not need the token again) */
+/* global connection (Tools menu)                                            */
 /* ------------------------------------------------------------------------ */
 
 static std::mutex g_conn_mtx;
-static std::string g_app_id, g_secret, g_service_type;
+static PcoConfig g_conn;
+static int g_poll_seconds = 2;
+static std::atomic<int> g_conn_gen{1};
 static std::vector<std::pair<std::string, std::string>> g_service_types;
+static obs_source_t *g_settings_src = nullptr;
 
 static std::string conn_file()
 {
@@ -50,37 +60,207 @@ static std::string conn_file()
 	return s;
 }
 
+static PcoConfig current_conn(int *poll = nullptr)
+{
+	std::lock_guard<std::mutex> lock(g_conn_mtx);
+	if (poll)
+		*poll = g_poll_seconds;
+	return g_conn;
+}
+
 void pco_load_connection_defaults()
 {
 	obs_data_t *d = obs_data_create_from_json_file(conn_file().c_str());
 	if (!d)
 		return;
 	std::lock_guard<std::mutex> lock(g_conn_mtx);
-	g_app_id = obs_data_get_string(d, "app_id");
-	g_secret = obs_data_get_string(d, "secret");
-	g_service_type = obs_data_get_string(d, "service_type");
+	g_conn.app_id = obs_data_get_string(d, "app_id");
+	g_conn.secret = obs_data_get_string(d, "secret");
+	g_conn.service_type = obs_data_get_string(d, "service_type");
+	g_conn.plan_id = obs_data_get_string(d, "plan_id");
+	g_conn.demo = obs_data_get_bool(d, "demo");
+	long long poll = obs_data_has_user_value(d, "poll_seconds") ? obs_data_get_int(d, "poll_seconds") : 2;
+	g_poll_seconds = poll > 0 ? static_cast<int>(poll) : 2;
 	obs_data_release(d);
 }
 
-static void save_connection_defaults(const PcoConfig &cfg)
+static void save_connection()
 {
-	std::lock_guard<std::mutex> lock(g_conn_mtx);
-	if (cfg.app_id == g_app_id && cfg.secret == g_secret && cfg.service_type == g_service_type)
-		return;
-	g_app_id = cfg.app_id;
-	g_secret = cfg.secret;
-	g_service_type = cfg.service_type;
 	char *dir = obs_module_config_path("");
 	if (dir) {
 		os_mkdirs(dir);
 		bfree(dir);
 	}
 	obs_data_t *d = obs_data_create();
-	obs_data_set_string(d, "app_id", g_app_id.c_str());
-	obs_data_set_string(d, "secret", g_secret.c_str());
-	obs_data_set_string(d, "service_type", g_service_type.c_str());
+	{
+		std::lock_guard<std::mutex> lock(g_conn_mtx);
+		obs_data_set_string(d, "app_id", g_conn.app_id.c_str());
+		obs_data_set_string(d, "secret", g_conn.secret.c_str());
+		obs_data_set_string(d, "service_type", g_conn.service_type.c_str());
+		obs_data_set_string(d, "plan_id", g_conn.plan_id.c_str());
+		obs_data_set_bool(d, "demo", g_conn.demo);
+		obs_data_set_int(d, "poll_seconds", g_poll_seconds);
+	}
 	obs_data_save_json_safe(d, conn_file().c_str(), "tmp", "bak");
 	obs_data_release(d);
+}
+
+static std::string feed_status()
+{
+	auto feed = PcoFeed::acquire(current_conn());
+	return feed->status();
+}
+
+static void fill_service_types(obs_property_t *list, const std::string &current)
+{
+	obs_property_list_clear(list);
+	obs_property_list_add_string(list, T("ServiceType.Choose"), "");
+	bool found = current.empty();
+	std::lock_guard<std::mutex> lock(g_conn_mtx);
+	for (auto &st : g_service_types) {
+		obs_property_list_add_string(list, st.second.c_str(), st.first.c_str());
+		if (st.first == current)
+			found = true;
+	}
+	if (!found) {
+		std::string label = "ID " + current;
+		obs_property_list_add_string(list, label.c_str(), current.c_str());
+	}
+}
+
+/* --- settings "source" (never shown in the source list, only opened from the Tools menu) --- */
+
+struct SettingsData {
+	obs_source_t *self;
+};
+
+static const char *settings_get_name(void *)
+{
+	return T("Settings.Title");
+}
+
+static void settings_update(void *, obs_data_t *settings)
+{
+	{
+		std::lock_guard<std::mutex> lock(g_conn_mtx);
+		g_conn.app_id = obs_data_get_string(settings, "app_id");
+		g_conn.secret = obs_data_get_string(settings, "secret");
+		g_conn.service_type = obs_data_get_string(settings, "service_type");
+		g_conn.plan_id = obs_data_get_string(settings, "plan_id");
+		g_conn.demo = obs_data_get_bool(settings, "demo");
+		g_poll_seconds = static_cast<int>(obs_data_get_int(settings, "poll_seconds"));
+		if (g_poll_seconds < 1)
+			g_poll_seconds = 2;
+	}
+	save_connection();
+	g_conn_gen++; // sources pick up the new connection on their next tick
+}
+
+static void *settings_create(obs_data_t *, obs_source_t *source)
+{
+	SettingsData *d = new SettingsData();
+	d->self = source;
+	return d;
+}
+
+static void settings_destroy(void *data)
+{
+	delete static_cast<SettingsData *>(data);
+}
+
+static void settings_defaults(obs_data_t *settings)
+{
+	obs_data_set_default_int(settings, "poll_seconds", 2);
+}
+
+static bool load_service_types_clicked(obs_properties_t *props, obs_property_t *, void *data)
+{
+	SettingsData *d = static_cast<SettingsData *>(data);
+	if (!d)
+		return false;
+	// the properties dialog edits the settings object directly (deferred update),
+	// so the values typed in are available here before "OK"
+	obs_data_t *settings = obs_source_get_settings(d->self);
+	std::string app = obs_data_get_string(settings, "app_id");
+	std::string secret = obs_data_get_string(settings, "secret");
+	std::string current = obs_data_get_string(settings, "service_type");
+	obs_data_release(settings);
+
+	std::string error;
+	auto types = pco_service_types(app, secret, error);
+	obs_property_t *status = obs_properties_get(props, "status");
+	if (!error.empty()) {
+		std::string msg = std::string(T("Status.Error")) + ": " + error;
+		obs_property_set_description(status, msg.c_str());
+		return true;
+	}
+	{
+		std::lock_guard<std::mutex> lock(g_conn_mtx);
+		g_service_types = types;
+	}
+	fill_service_types(obs_properties_get(props, "service_type"), current);
+	std::string msg = std::to_string(types.size()) + " " + T("ServiceType.Loaded");
+	obs_property_set_description(status, msg.c_str());
+	return true;
+}
+
+static bool refresh_clicked(obs_properties_t *props, obs_property_t *, void *)
+{
+	auto feed = PcoFeed::acquire(current_conn());
+	feed->refresh();
+	std::string msg = std::string(T("Status")) + ": " + feed->status();
+	obs_property_set_description(obs_properties_get(props, "status"), msg.c_str());
+	return true;
+}
+
+static obs_properties_t *settings_properties(void *data)
+{
+	obs_properties_t *props = obs_properties_create();
+	obs_properties_set_flags(props, OBS_PROPERTIES_DEFER_UPDATE);
+
+	obs_properties_add_text(props, "token_info", T("TokenInfo"), OBS_TEXT_INFO);
+	obs_properties_add_text(props, "app_id", T("AppId"), OBS_TEXT_DEFAULT);
+	obs_properties_add_text(props, "secret", T("Secret"), OBS_TEXT_PASSWORD);
+	obs_property_t *st = obs_properties_add_list(props, "service_type", T("ServiceType"), OBS_COMBO_TYPE_LIST,
+						     OBS_COMBO_FORMAT_STRING);
+	fill_service_types(st, current_conn().service_type);
+	obs_properties_add_button2(props, "load_types", T("ServiceType.Load"), load_service_types_clicked, data);
+	obs_property_t *plan = obs_properties_add_text(props, "plan_id", T("PlanId"), OBS_TEXT_DEFAULT);
+	obs_property_set_long_description(plan, T("PlanId.Tooltip"));
+	obs_properties_add_int(props, "poll_seconds", T("PollSeconds"), 1, 30, 1);
+	obs_properties_add_bool(props, "demo", T("Demo"));
+	std::string status = std::string(T("Status")) + ": " + feed_status();
+	obs_properties_add_text(props, "status", status.c_str(), OBS_TEXT_INFO);
+	obs_properties_add_button2(props, "refresh", T("Refresh"), refresh_clicked, data);
+	return props;
+}
+
+static void open_settings(void *)
+{
+	if (!g_settings_src) {
+		obs_data_t *s = obs_data_create();
+		{
+			std::lock_guard<std::mutex> lock(g_conn_mtx);
+			obs_data_set_string(s, "app_id", g_conn.app_id.c_str());
+			obs_data_set_string(s, "secret", g_conn.secret.c_str());
+			obs_data_set_string(s, "service_type", g_conn.service_type.c_str());
+			obs_data_set_string(s, "plan_id", g_conn.plan_id.c_str());
+			obs_data_set_bool(s, "demo", g_conn.demo);
+			obs_data_set_int(s, "poll_seconds", g_poll_seconds);
+		}
+		g_settings_src = obs_source_create_private(SETTINGS_ID, T("Settings.Title"), s);
+		obs_data_release(s);
+	}
+	if (g_settings_src)
+		obs_frontend_open_source_properties(g_settings_src);
+}
+
+static void frontend_event(enum obs_frontend_event event, void *)
+{
+	if (event == OBS_FRONTEND_EVENT_EXIT && g_settings_src) {
+		obs_source_release(g_settings_src);
+		g_settings_src = nullptr;
+	}
 }
 
 /* ------------------------------------------------------------------------ */
@@ -101,6 +281,7 @@ struct PcoSource {
 	std::mutex mtx;
 	std::shared_ptr<PcoFeed> feed;
 	std::string feed_key;
+	int feed_gen = 0;
 	std::string view = "lowerthird";
 	std::string config_json = "{}";
 	uint32_t width = 1920, height = 1080;
@@ -121,6 +302,25 @@ static std::string color_hex(long long abgr)
 	snprintf(buf, sizeof(buf), "#%02x%02x%02x", (unsigned)(abgr & 0xFF), (unsigned)((abgr >> 8) & 0xFF),
 		 (unsigned)((abgr >> 16) & 0xFF));
 	return buf;
+}
+
+/* (re)connect the source to the feed of the current global connection */
+static void sync_feed(PcoSource *s)
+{
+	int gen = g_conn_gen.load();
+	int poll = 2;
+	PcoConfig cfg = current_conn(&poll);
+	std::shared_ptr<PcoFeed> old_feed; // released outside the lock
+	std::lock_guard<std::mutex> lock(s->mtx);
+	if (s->feed && s->feed_gen == gen)
+		return;
+	if (!s->feed || cfg.key() != s->feed_key) {
+		old_feed = s->feed;
+		s->feed = PcoFeed::acquire(cfg);
+		s->feed_key = cfg.key();
+	}
+	s->feed->set_interval(poll);
+	s->feed_gen = gen;
 }
 
 static void update_browser_size(PcoSource *s)
@@ -165,15 +365,6 @@ static void pco_update(void *data, obs_data_t *settings)
 {
 	PcoSource *s = static_cast<PcoSource *>(data);
 
-	PcoConfig cfg;
-	cfg.app_id = obs_data_get_string(settings, "app_id");
-	cfg.secret = obs_data_get_string(settings, "secret");
-	cfg.service_type = obs_data_get_string(settings, "service_type");
-	cfg.plan_id = obs_data_get_string(settings, "plan_id");
-	cfg.demo = obs_data_get_bool(settings, "demo");
-	if (cfg.has_credentials() && !cfg.demo)
-		save_connection_defaults(cfg);
-
 	obs_data_t *c = obs_data_create();
 	obs_data_set_string(c, "accent", color_hex(obs_data_get_int(settings, "accent")).c_str());
 	obs_data_set_int(c, "warn_seconds", obs_data_get_int(settings, "warn_seconds"));
@@ -182,25 +373,22 @@ static void pco_update(void *data, obs_data_t *settings)
 	obs_data_set_int(c, "preservice_minutes", obs_data_get_int(settings, "preservice_minutes"));
 	obs_data_set_int(c, "lt_bottom", obs_data_get_int(settings, "lt_bottom"));
 	obs_data_set_int(c, "lt_side", obs_data_get_int(settings, "lt_side"));
+	obs_data_set_int(c, "lt_width", obs_data_get_int(settings, "lt_width"));
+	obs_data_set_int(c, "lt_height", obs_data_get_int(settings, "lt_height"));
+	obs_data_set_bool(c, "lt_clock", obs_data_get_bool(settings, "lt_clock"));
 	obs_data_set_bool(c, "opaque", obs_data_get_bool(settings, "opaque"));
 	obs_data_set_string(c, "lang", obs_data_get_string(settings, "lang"));
 	std::string config_json = obs_data_get_json(c);
 	obs_data_release(c);
 
-	std::shared_ptr<PcoFeed> old_feed;
 	{
 		std::lock_guard<std::mutex> lock(s->mtx);
 		s->view = obs_data_get_string(settings, "view");
 		if (s->view.empty())
 			s->view = "lowerthird";
 		s->config_json = config_json;
-		if (cfg.key() != s->feed_key || !s->feed) {
-			old_feed = s->feed;
-			s->feed = PcoFeed::acquire(cfg);
-			s->feed_key = cfg.key();
-		}
-		s->feed->set_interval(static_cast<int>(obs_data_get_int(settings, "poll_seconds")));
 	}
+	sync_feed(s);
 
 	uint32_t w = static_cast<uint32_t>(obs_data_get_int(settings, "width"));
 	uint32_t h = static_cast<uint32_t>(obs_data_get_int(settings, "height"));
@@ -317,6 +505,7 @@ static void pco_tick(void *data, float seconds)
 	s->push_timer += seconds;
 	if (s->push_timer >= 0.5f) {
 		s->push_timer = 0.0f;
+		sync_feed(s); // connection may have been changed in the Tools menu
 		push_state(s);
 	}
 }
@@ -337,85 +526,14 @@ static void pco_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "show_progress", true);
 	obs_data_set_default_int(settings, "preservice_minutes", 30);
 	obs_data_set_default_int(settings, "lt_bottom", 16);
-	obs_data_set_default_int(settings, "lt_side", 40);
+	obs_data_set_default_int(settings, "lt_side", 24);
+	obs_data_set_default_int(settings, "lt_width", 100);
+	obs_data_set_default_int(settings, "lt_height", 64);
+	obs_data_set_default_bool(settings, "lt_clock", true);
 	obs_data_set_default_bool(settings, "opaque", false);
 	obs_data_set_default_string(settings, "lang", "de");
 	obs_data_set_default_int(settings, "width", 1920);
 	obs_data_set_default_int(settings, "height", 1080);
-	obs_data_set_default_int(settings, "poll_seconds", 2);
-
-	std::lock_guard<std::mutex> lock(g_conn_mtx);
-	obs_data_set_default_string(settings, "app_id", g_app_id.c_str());
-	obs_data_set_default_string(settings, "secret", g_secret.c_str());
-	obs_data_set_default_string(settings, "service_type", g_service_type.c_str());
-}
-
-/* ------------------------------------------------------------------------ */
-/* properties                                                                */
-/* ------------------------------------------------------------------------ */
-
-static void fill_service_types(obs_property_t *list, const std::string &current)
-{
-	obs_property_list_clear(list);
-	obs_property_list_add_string(list, T("ServiceType.Choose"), "");
-	bool found = current.empty();
-	std::lock_guard<std::mutex> lock(g_conn_mtx);
-	for (auto &st : g_service_types) {
-		obs_property_list_add_string(list, st.second.c_str(), st.first.c_str());
-		if (st.first == current)
-			found = true;
-	}
-	if (!found) {
-		std::string label = "ID " + current;
-		obs_property_list_add_string(list, label.c_str(), current.c_str());
-	}
-}
-
-static bool load_service_types_clicked(obs_properties_t *props, obs_property_t *, void *data)
-{
-	PcoSource *s = static_cast<PcoSource *>(data);
-	if (!s)
-		return false;
-	obs_data_t *settings = obs_source_get_settings(s->self);
-	std::string app = obs_data_get_string(settings, "app_id");
-	std::string secret = obs_data_get_string(settings, "secret");
-	std::string current = obs_data_get_string(settings, "service_type");
-	obs_data_release(settings);
-
-	std::string error;
-	auto types = pco_service_types(app, secret, error);
-	obs_property_t *status = obs_properties_get(props, "status");
-	if (!error.empty()) {
-		std::string msg = std::string(T("Status.Error")) + ": " + error;
-		obs_property_set_description(status, msg.c_str());
-		return true;
-	}
-	{
-		std::lock_guard<std::mutex> lock(g_conn_mtx);
-		g_service_types = types;
-	}
-	fill_service_types(obs_properties_get(props, "service_type"), current);
-	std::string msg = std::to_string(types.size()) + " " + T("ServiceType.Loaded");
-	obs_property_set_description(status, msg.c_str());
-	return true;
-}
-
-static bool refresh_clicked(obs_properties_t *props, obs_property_t *, void *data)
-{
-	PcoSource *s = static_cast<PcoSource *>(data);
-	if (!s)
-		return false;
-	std::string status;
-	{
-		std::lock_guard<std::mutex> lock(s->mtx);
-		if (s->feed) {
-			s->feed->refresh();
-			status = s->feed->status();
-		}
-	}
-	std::string msg = std::string(T("Status")) + ": " + status;
-	obs_property_set_description(obs_properties_get(props, "status"), msg.c_str());
-	return true;
 }
 
 static obs_properties_t *pco_properties(void *data)
@@ -430,6 +548,15 @@ static obs_properties_t *pco_properties(void *data)
 		obs_property_list_add_string(view, T(key.c_str()), VIEWS[i]);
 	}
 
+	// lower third
+	obs_properties_t *lt = obs_properties_create();
+	obs_properties_add_int_slider(lt, "lt_width", T("LowerThirdWidth"), 20, 100, 1);
+	obs_properties_add_int_slider(lt, "lt_height", T("LowerThirdHeight"), 40, 160, 1);
+	obs_properties_add_int_slider(lt, "lt_bottom", T("LowerThirdBottom"), 0, 300, 1);
+	obs_properties_add_int_slider(lt, "lt_side", T("LowerThirdSide"), 0, 400, 1);
+	obs_properties_add_bool(lt, "lt_clock", T("LowerThirdClock"));
+	obs_properties_add_group(props, "lowerthird", T("Group.LowerThird"), OBS_GROUP_NORMAL, lt);
+
 	// appearance
 	obs_properties_t *ap = obs_properties_create();
 	obs_properties_add_color(ap, "accent", T("Accent"));
@@ -437,8 +564,6 @@ static obs_properties_t *pco_properties(void *data)
 	obs_properties_add_bool(ap, "show_next", T("ShowNext"));
 	obs_properties_add_bool(ap, "show_progress", T("ShowProgress"));
 	obs_properties_add_int(ap, "preservice_minutes", T("PreserviceMinutes"), 0, 240, 5);
-	obs_properties_add_int_slider(ap, "lt_bottom", T("LowerThirdBottom"), 0, 300, 1);
-	obs_properties_add_int_slider(ap, "lt_side", T("LowerThirdSide"), 0, 400, 1);
 	obs_properties_add_bool(ap, "opaque", T("Opaque"));
 	obs_property_t *lang = obs_properties_add_list(ap, "lang", T("Language"), OBS_COMBO_TYPE_LIST,
 						       OBS_COMBO_FORMAT_STRING);
@@ -448,34 +573,15 @@ static obs_properties_t *pco_properties(void *data)
 	obs_properties_add_int(ap, "height", T("Height"), 180, 4320, 1);
 	obs_properties_add_group(props, "appearance", T("Group.Appearance"), OBS_GROUP_NORMAL, ap);
 
-	// connection
-	obs_properties_t *cp = obs_properties_create();
-	obs_properties_add_text(cp, "token_info", T("TokenInfo"), OBS_TEXT_INFO);
-	obs_properties_add_text(cp, "app_id", T("AppId"), OBS_TEXT_DEFAULT);
-	obs_properties_add_text(cp, "secret", T("Secret"), OBS_TEXT_PASSWORD);
-	obs_property_t *st = obs_properties_add_list(cp, "service_type", T("ServiceType"), OBS_COMBO_TYPE_LIST,
-						     OBS_COMBO_FORMAT_STRING);
-	{
-		obs_data_t *settings = s ? obs_source_get_settings(s->self) : nullptr;
-		std::string current = settings ? obs_data_get_string(settings, "service_type") : "";
-		obs_data_release(settings);
-		fill_service_types(st, current);
-	}
-	obs_properties_add_button2(cp, "load_types", T("ServiceType.Load"), load_service_types_clicked, s);
-	obs_property_t *plan = obs_properties_add_text(cp, "plan_id", T("PlanId"), OBS_TEXT_DEFAULT);
-	obs_property_set_long_description(plan, T("PlanId.Tooltip"));
-	obs_properties_add_int(cp, "poll_seconds", T("PollSeconds"), 1, 30, 1);
-	obs_properties_add_bool(cp, "demo", T("Demo"));
+	// connection: only a hint + status, settings live in the Tools menu
 	std::string status = std::string(T("Status")) + ": ";
 	if (s) {
 		std::lock_guard<std::mutex> lock(s->mtx);
 		if (s->feed)
 			status += s->feed->status();
 	}
-	obs_properties_add_text(cp, "status", status.c_str(), OBS_TEXT_INFO);
-	obs_properties_add_button2(cp, "refresh", T("Refresh"), refresh_clicked, s);
-	obs_properties_add_group(props, "connection", T("Group.Connection"), OBS_GROUP_NORMAL, cp);
-
+	obs_properties_add_text(props, "connection_info", T("ConnectionInfo"), OBS_TEXT_INFO);
+	obs_properties_add_text(props, "status", status.c_str(), OBS_TEXT_INFO);
 	return props;
 }
 
@@ -498,4 +604,23 @@ void pco_register_source()
 	info.video_tick = pco_tick;
 	info.enum_active_sources = pco_enum_sources;
 	obs_register_source(&info);
+
+	// hidden settings type, opened from Tools -> Planning Center Live settings
+	struct obs_source_info sinfo = {};
+	sinfo.id = SETTINGS_ID;
+	sinfo.type = OBS_SOURCE_TYPE_INPUT;
+	sinfo.output_flags = OBS_SOURCE_CAP_OBSOLETE; // not offered in "Add source"
+	sinfo.get_name = settings_get_name;
+	sinfo.create = settings_create;
+	sinfo.destroy = settings_destroy;
+	sinfo.update = settings_update;
+	sinfo.get_defaults = settings_defaults;
+	sinfo.get_properties = settings_properties;
+	obs_register_source(&sinfo);
+}
+
+void pco_register_frontend()
+{
+	obs_frontend_add_tools_menu_item(T("Menu.Settings"), open_settings, nullptr);
+	obs_frontend_add_event_callback(frontend_event, nullptr);
 }

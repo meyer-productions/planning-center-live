@@ -107,7 +107,10 @@ class Config:
             "show_progress": self.show_progress,
             "preservice_minutes": self.preservice_minutes,
             "lt_bottom": 16,
-            "lt_side": 40,
+            "lt_side": 24,
+            "lt_width": 100,
+            "lt_height": 64,
+            "lt_clock": True,
             "lang": "de",
         }
 

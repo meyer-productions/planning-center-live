@@ -23,6 +23,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 void pco_register_source();
 void pco_load_connection_defaults();
+void pco_register_frontend();
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
@@ -36,6 +37,7 @@ bool obs_module_load(void)
 {
 	pco_load_connection_defaults();
 	pco_register_source();
+	pco_register_frontend();
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
 	return true;
 }

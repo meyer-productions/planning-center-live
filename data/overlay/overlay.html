@@ -43,28 +43,34 @@
 
   /* ---------------- Lower third ---------------- */
   #lt { }
-  /* slim single-line bar, as low as possible (margins adjustable via ltbottom / ltside) */
+  /* slim single-line bar at the bottom edge.
+     --lt-left/--lt-right: position (from distance + width setting), --k: size factor (height / 64 px) */
   .lt-box {
-    position: absolute; left: var(--lt-side, 40px); right: var(--lt-side, 40px); bottom: var(--lt-bottom, 16px); height: 64px;
-    display: flex; align-items: stretch; background: var(--bg); border-radius: 8px;
+    --k: 1;
+    position: absolute; left: var(--lt-left, 24px); right: var(--lt-right, 24px); bottom: var(--lt-bottom, 16px);
+    height: calc(64px * var(--k));
+    display: flex; align-items: stretch; background: var(--bg); border-radius: calc(8px * var(--k));
     overflow: hidden; box-shadow: 0 8px 28px rgba(0,0,0,.35);
     transform: translateY(24px); opacity: 0;
     transition: transform .5s cubic-bezier(.2,.8,.2,1), opacity .5s ease;
   }
   #lt.on .lt-box.show { transform: none; opacity: 1; }
-  .lt-accent { width: 6px; background: var(--accent); flex: none; }
-  .lt-main { flex: 1; min-width: 0; padding: 0 24px; display: flex; align-items: center; gap: 18px; white-space: nowrap; }
-  .lt-label { flex: none; font-size: 17px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
-  .lt-title { flex: 0 1 auto; min-width: 0; font-size: 32px; font-weight: 650; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; }
-  .lt-next { flex: 0 10000 auto; min-width: 0; font-size: 21px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
-             padding-left: 18px; border-left: 1px solid rgba(255,255,255,.18); }
+  .lt-accent { width: calc(6px * var(--k)); background: var(--accent); flex: none; }
+  .lt-main { flex: 1; min-width: 0; padding: 0 calc(24px * var(--k)); display: flex; align-items: center; gap: calc(18px * var(--k)); white-space: nowrap; }
+  .lt-label { flex: none; font-size: calc(17px * var(--k)); font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+  .lt-title { flex: 0 1 auto; min-width: 0; font-size: calc(32px * var(--k)); font-weight: 650; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; }
+  .lt-next { flex: 0 10000 auto; min-width: 0; font-size: calc(21px * var(--k)); color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+             padding-left: calc(18px * var(--k)); border-left: 1px solid rgba(255,255,255,.18); }
   .lt-next:empty { display: none; }
   .lt-next b { color: var(--fg); font-weight: 600; }
-  .lt-timer { flex: none; padding: 0 24px; display: flex; align-items: center; gap: 12px;
+  .lt-timer, .lt-clock { flex: none; padding: 0 calc(24px * var(--k)); display: flex; align-items: center; gap: calc(12px * var(--k));
               border-left: 1px solid rgba(255,255,255,.12); }
-  .lt-time { font-size: 42px; font-weight: 700; line-height: 1; min-width: 3.2ch; text-align: right; }
-  .lt-sub { font-size: 15px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; order: -1; }
-  .lt-progress { position: absolute; left: 6px; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.1); }
+  .lt-time { font-size: calc(42px * var(--k)); font-weight: 700; line-height: 1; min-width: 3.2ch; text-align: right; }
+  .lt-sub { font-size: calc(15px * var(--k)); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; order: -1; }
+  .lt-clock { background: rgba(255,255,255,.05); }
+  .lt-clock-time { font-size: calc(34px * var(--k)); font-weight: 600; line-height: 1; color: var(--fg); }
+  .lt-clock[hidden] { display: none; }
+  .lt-progress { position: absolute; left: calc(6px * var(--k)); right: 0; bottom: 0; height: calc(3px * var(--k)); background: rgba(255,255,255,.1); }
   .lt-progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 1s linear; }
   .lt-progress.warn i { background: var(--warn); }
   .lt-progress.over i { background: var(--over); }
@@ -145,6 +151,9 @@
         <div class="lt-time mono" id="ltTime">0:00</div>
         <div class="lt-sub" id="ltSub">verbleibend</div>
       </div>
+      <div class="lt-clock" id="ltClock">
+        <div class="lt-clock-time mono" id="ltClockTime">00:00:00</div>
+      </div>
       <div class="lt-progress" id="ltProg"><i></i></div>
     </div>
   </section>
@@ -204,7 +213,6 @@
   const qs = new URLSearchParams(location.search);
   const fixedView = (qs.get("view") || "active").toLowerCase();
   if (qs.get("ltbottom")) document.documentElement.style.setProperty("--lt-bottom", parseInt(qs.get("ltbottom"), 10) + "px");
-  if (qs.get("ltside")) document.documentElement.style.setProperty("--lt-side", parseInt(qs.get("ltside"), 10) + "px");
   const fixedScale = parseFloat(qs.get("scale"));
   function fit() {
     const sc = fixedScale > 0 ? fixedScale : Math.min(innerWidth / 1920, innerHeight / 1080) || 1;
@@ -232,6 +240,7 @@
   let state = null;
   let clockOffset = 0;      // server time - local time
   let failCount = 0;
+  let ltClockOn = true;     // clock at the right end of the lower third
 
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const now = () => Date.now() + clockOffset;
@@ -330,6 +339,9 @@
       setCls($("ltTime"), ""); setCls($("ltProg"), "");
       $("ltProg").style.display = "none";
     }
+    $("ltClock").hidden = !ltClockOn;
+    if (ltClockOn)
+      $("ltClockTime").textContent = new Date(now()).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     box.classList.toggle("show", show);
   }
 
@@ -481,7 +493,15 @@
     if (!cfg) return;
     const root = document.documentElement.style;
     if (!qs.get("ltbottom") && cfg.lt_bottom != null) root.setProperty("--lt-bottom", cfg.lt_bottom + "px");
-    if (!qs.get("ltside") && cfg.lt_side != null) root.setProperty("--lt-side", cfg.lt_side + "px");
+    // horizontal: distance left/right, then width in % of the remaining space (centered)
+    const side = qs.get("ltside") ? parseInt(qs.get("ltside"), 10) : (cfg.lt_side != null ? cfg.lt_side : 24);
+    const widthPct = Math.max(10, Math.min(100, qs.get("ltwidth") ? parseInt(qs.get("ltwidth"), 10) : (cfg.lt_width || 100)));
+    const inset = side + (1920 - 2 * side) * (1 - widthPct / 100) / 2;
+    root.setProperty("--lt-left", inset + "px");
+    root.setProperty("--lt-right", inset + "px");
+    const h = qs.get("ltheight") ? parseInt(qs.get("ltheight"), 10) : (cfg.lt_height || 64);
+    $("ltBox").style.setProperty("--k", Math.max(0.5, h / 64));
+    ltClockOn = qs.get("ltclock") ? qs.get("ltclock") === "1" : cfg.lt_clock !== false;
     if (qs.get("bg") !== "1") document.body.classList.toggle("opaque", !!cfg.opaque);
     if (!qs.get("lang") && cfg.lang) lang = cfg.lang;
   }
