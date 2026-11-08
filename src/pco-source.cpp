@@ -27,6 +27,8 @@ the Free Software Foundation; either version 2 of the License, or
 #include <util/platform.h>
 #include <plugin-support.h>
 
+#include "update-check.hpp"
+
 #include <atomic>
 #include <cstdio>
 #include <mutex>
@@ -37,7 +39,7 @@ the Free Software Foundation; either version 2 of the License, or
 #define SETTINGS_ID "planning_center_live_settings"
 #define T(x) obs_module_text(x)
 
-static const char *VIEWS[] = {"lowerthird", "countdown", "list", "service", "clock", "off"};
+static const char *VIEWS[] = {"lowerthird", "stage", "countdown", "list", "service", "clock", "timer", "off"};
 static const size_t VIEW_COUNT = sizeof(VIEWS) / sizeof(VIEWS[0]);
 static const unsigned DEFAULT_ACCENT = 0xFF2B00E4; // #e4002b in OBS ABGR
 
@@ -213,6 +215,20 @@ static bool refresh_clicked(obs_properties_t *props, obs_property_t *, void *)
 	return true;
 }
 
+static bool update_check_clicked(obs_properties_t *props, obs_property_t *, void *)
+{
+	UpdateInfo i = pco_update_check_now();
+	obs_property_set_description(obs_properties_get(props, "update_info"), pco_update_text().c_str());
+	obs_property_set_visible(obs_properties_get(props, "update_download"), i.available);
+	return true;
+}
+
+static bool update_download_clicked(obs_properties_t *, obs_property_t *, void *)
+{
+	pco_update_open_download();
+	return false;
+}
+
 static obs_properties_t *settings_properties(void *data)
 {
 	obs_properties_t *props = obs_properties_create();
@@ -232,6 +248,13 @@ static obs_properties_t *settings_properties(void *data)
 	std::string status = std::string(T("Status")) + ": " + feed_status();
 	obs_properties_add_text(props, "status", status.c_str(), OBS_TEXT_INFO);
 	obs_properties_add_button2(props, "refresh", T("Refresh"), refresh_clicked, data);
+
+	// updates: GitHub releases, only check + open the download
+	obs_properties_add_text(props, "update_info", pco_update_text().c_str(), OBS_TEXT_INFO);
+	obs_properties_add_button2(props, "update_check", T("Update.Check"), update_check_clicked, data);
+	obs_property_t *dl =
+		obs_properties_add_button2(props, "update_download", T("Update.Download"), update_download_clicked, data);
+	obs_property_set_visible(dl, pco_update_info().available);
 	return props;
 }
 
@@ -376,6 +399,10 @@ static void pco_update(void *data, obs_data_t *settings)
 	obs_data_set_int(c, "lt_width", obs_data_get_int(settings, "lt_width"));
 	obs_data_set_int(c, "lt_height", obs_data_get_int(settings, "lt_height"));
 	obs_data_set_bool(c, "lt_clock", obs_data_get_bool(settings, "lt_clock"));
+	obs_data_set_int(c, "stage_height", obs_data_get_int(settings, "stage_height"));
+	obs_data_set_bool(c, "stage_light", obs_data_get_bool(settings, "stage_light"));
+	obs_data_set_bool(c, "stage_seconds", obs_data_get_bool(settings, "stage_seconds"));
+	obs_data_set_bool(c, "timer_clock", obs_data_get_bool(settings, "timer_clock"));
 	obs_data_set_bool(c, "opaque", obs_data_get_bool(settings, "opaque"));
 	obs_data_set_string(c, "lang", obs_data_get_string(settings, "lang"));
 	std::string config_json = obs_data_get_json(c);
@@ -419,12 +446,27 @@ static void set_view(PcoSource *s, const std::string &view)
 	obs_data_release(d);
 }
 
+static void toggle_stage_light(PcoSource *s)
+{
+	obs_data_t *cur = obs_source_get_settings(s->self);
+	bool light = obs_data_get_bool(cur, "stage_light");
+	obs_data_release(cur);
+	obs_data_t *d = obs_data_create();
+	obs_data_set_bool(d, "stage_light", !light);
+	obs_source_update(s->self, d);
+	obs_data_release(d);
+}
+
 static void hotkey_cb(void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed)
 {
 	if (!pressed)
 		return;
 	HotkeyCtx *hc = static_cast<HotkeyCtx *>(data);
-	set_view(hc->src, hc->view);
+	std::string action = hc->view;
+	if (action == "action.stage_light")
+		toggle_stage_light(hc->src);
+	else
+		set_view(hc->src, hc->view);
 }
 
 static void *pco_create(obs_data_t *settings, obs_source_t *source)
@@ -456,13 +498,16 @@ static void *pco_create(obs_data_t *settings, obs_source_t *source)
 		obs_log(LOG_ERROR, "browser_source not available – is obs-browser installed?");
 
 	// hotkeys: one per view + "next view"
-	s->hk_ctx.reserve(VIEW_COUNT + 1);
+	s->hk_ctx.reserve(VIEW_COUNT + 2);
 	s->hk_ctx.push_back({s, "next"});
 	for (size_t i = 0; i < VIEW_COUNT; i++)
 		s->hk_ctx.push_back({s, VIEWS[i]});
+	s->hk_ctx.push_back({s, "action.stage_light"});
 	for (HotkeyCtx &hc : s->hk_ctx) {
-		std::string name = std::string("pco_live.view.") + hc.view;
-		std::string key = std::string("Hotkey.") + hc.view;
+		std::string id = hc.view;
+		bool action = id.rfind("action.", 0) == 0;
+		std::string name = action ? "pco_live." + id : "pco_live.view." + id;
+		std::string key = std::string("Hotkey.") + (action ? id.substr(7) : id);
 		s->hotkeys.push_back(obs_hotkey_register_source(source, name.c_str(), T(key.c_str()), hotkey_cb, &hc));
 	}
 
@@ -530,6 +575,10 @@ static void pco_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "lt_width", 100);
 	obs_data_set_default_int(settings, "lt_height", 64);
 	obs_data_set_default_bool(settings, "lt_clock", true);
+	obs_data_set_default_int(settings, "stage_height", 240);
+	obs_data_set_default_bool(settings, "stage_light", false);
+	obs_data_set_default_bool(settings, "stage_seconds", true);
+	obs_data_set_default_bool(settings, "timer_clock", true);
 	obs_data_set_default_bool(settings, "opaque", false);
 	obs_data_set_default_string(settings, "lang", "de");
 	obs_data_set_default_int(settings, "width", 1920);
@@ -557,6 +606,18 @@ static obs_properties_t *pco_properties(void *data)
 	obs_properties_add_bool(lt, "lt_clock", T("LowerThirdClock"));
 	obs_properties_add_group(props, "lowerthird", T("Group.LowerThird"), OBS_GROUP_NORMAL, lt);
 
+	// stage banner (uses distance bottom/sides of the lower third)
+	obs_properties_t *sb = obs_properties_create();
+	obs_properties_add_int_slider(sb, "stage_height", T("StageHeight"), 120, 480, 1);
+	obs_properties_add_bool(sb, "stage_light", T("StageLight"));
+	obs_properties_add_bool(sb, "stage_seconds", T("StageSeconds"));
+	obs_properties_add_group(props, "stage", T("Group.Stage"), OBS_GROUP_NORMAL, sb);
+
+	// timer + clock
+	obs_properties_t *tmg = obs_properties_create();
+	obs_properties_add_bool(tmg, "timer_clock", T("TimerClock"));
+	obs_properties_add_group(props, "timer", T("Group.Timer"), OBS_GROUP_NORMAL, tmg);
+
 	// appearance
 	obs_properties_t *ap = obs_properties_create();
 	obs_properties_add_color(ap, "accent", T("Accent"));
@@ -582,6 +643,10 @@ static obs_properties_t *pco_properties(void *data)
 	}
 	obs_properties_add_text(props, "connection_info", T("ConnectionInfo"), OBS_TEXT_INFO);
 	obs_properties_add_text(props, "status", status.c_str(), OBS_TEXT_INFO);
+	if (pco_update_info().available) {
+		std::string upd = pco_update_text() + " – " + T("Update.Hint");
+		obs_properties_add_text(props, "update_hint", upd.c_str(), OBS_TEXT_INFO);
+	}
 	return props;
 }
 

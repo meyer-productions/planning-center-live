@@ -701,6 +701,7 @@ static void feed_thread(std::shared_ptr<FeedContext> c)
 				c->reset_caches = false;
 				c->plan_checked = -1e9;
 				c->items_loaded = -1e9;
+				c->demo_t0 = 0; // demo run starts again
 			}
 		}
 

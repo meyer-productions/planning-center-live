@@ -14,18 +14,28 @@ login session that expires, no cookie banner.
   | View | |
   |---|---|
   | **Lower third – countdown** (default) | Slim bar at the bottom edge: current item, next item, remaining time, progress bar and a clock on the right. Amber below the warning threshold, red `+m:ss` when the item runs over. Before the service it shows "starts in", otherwise it hides itself. |
+  | **Stage banner** | Large banner at the bottom: current item and next item, a big remaining-time timer (readable from the stage) and an equally large clock. Optional white background. Before the service it shows "starts in", otherwise plan + clock. |
   | **Big countdown** | Remaining time of the current item, large (stage / confidence monitor). |
   | **Run sheet** | Like PCO LIVE: planned start times, keys, lengths, current item highlighted, auto-scroll. |
   | **Service countdown** | Countdown to the service start, then elapsed time and planned end. |
   | **Clock** | Clock plus current item and remaining time. |
+  | **Current item + timer + clock** | Like "Clock", but swapped: the remaining time is the big number (warning/over-time colours, "starts in" before the service), current item and clock beside it. The clock can be hidden. |
   | **Hidden** | Nothing. |
 
 - Lower third: width, height, distance from bottom/sides, clock on/off.
+- Stage banner: height, white background, clock with/without seconds
+  (shares the distance from bottom/sides with the lower third).
+- Long item titles shrink (down to 60 %) before they are cut off.
 - Appearance: accent colour, warning threshold, next item, progress bar,
   "starts in" window, opaque background, German/English labels, canvas size.
 - Several sources at the same time (e.g. lower third on the program, run sheet
   on the multiview) – they share one connection.
-- Hotkeys per source for every view and "next view".
+- Hotkeys per source for every view and "next view", plus "stage banner
+  white/dark".
+- Update check: on start the plugin looks for a newer GitHub release (log +
+  Tools → Planning Center Live settings, hint in the source properties).
+  "Download update" opens the matching file (Windows ZIP / macOS pkg, Linux:
+  release page) – installation stays manual, nothing is replaced automatically.
 - Remote switching via obs-websocket (e.g. Bitfocus Companion / Stream Deck).
 
 All views are laid out for 16:9 (1920×1080 by default).
@@ -92,7 +102,7 @@ Bitfocus Companion with a custom request:
   "requestData": { "inputName": "Planning Center Live", "inputSettings": { "view": "countdown" } } }
 ```
 
-View values: `lowerthird`, `countdown`, `list`, `service`, `clock`, `off`.
+View values: `lowerthird`, `stage`, `countdown`, `list`, `service`, `clock`, `timer`, `off`.
 
 ## How it works
 

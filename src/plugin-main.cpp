@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <plugin-support.h>
 
 #include "pco-data.hpp"
+#include "update-check.hpp"
 
 void pco_register_source();
 void pco_load_connection_defaults();
@@ -39,11 +40,13 @@ bool obs_module_load(void)
 	pco_register_source();
 	pco_register_frontend();
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
+	pco_update_check_async(); // only a hint, nothing is installed automatically
 	return true;
 }
 
 void obs_module_unload(void)
 {
 	pco_shutdown();
+	pco_update_shutdown();
 	obs_log(LOG_INFO, "plugin unloaded");
 }

@@ -6,7 +6,8 @@
 <!--
   Planning Center Live – OBS overlay (1920x1080 browser source)
   URL parameters:
-    view=active|lowerthird|countdown|list|service|clock|off   (default: active = follows OBS/hotkeys)
+    view=active|lowerthird|stage|countdown|list|service|clock|timer|off   (default: active = follows OBS/hotkeys)
+    stageheight=240 / stagelight=1   stage banner height (px) / white background
     accent=%23e4002b   override accent color
     scale=1.0          fixed scale (default: fit to window – 1.0 in a 1920x1080 source)
     bg=1               opaque background (for a confidence monitor / separate screen)
@@ -75,6 +76,40 @@
   .lt-progress.warn i { background: var(--warn); }
   .lt-progress.over i { background: var(--over); }
 
+  /* ---------------- Stage banner (big timer + big clock at the bottom) ---------------- */
+  /* --k: size factor (height / 240 px); position shares distance bottom/sides with the lower third */
+  .sb-box {
+    --k: 1;
+    --sb-bg: rgba(12, 14, 18, .92); --sb-fg: #fff; --sb-muted: rgba(255,255,255,.62); --sb-line: rgba(255,255,255,.14);
+    --sb-cell: rgba(255,255,255,.05);
+    position: absolute; left: var(--lt-side, 24px); right: var(--lt-side, 24px); bottom: var(--lt-bottom, 16px);
+    height: calc(240px * var(--k));
+    display: flex; align-items: stretch; background: var(--sb-bg); color: var(--sb-fg);
+    border-radius: calc(14px * var(--k)); overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.4);
+  }
+  .sb-box.light { --sb-bg: #fff; --sb-fg: #111; --sb-muted: rgba(0,0,0,.55); --sb-line: rgba(0,0,0,.12); --sb-cell: rgba(0,0,0,.04); }
+  .sb-box.light .warn { color: #d98200 !important; }
+  .sb-box.light .over { color: #d61f1f !important; }
+  .sb-accent { width: calc(12px * var(--k)); background: var(--accent); flex: none; }
+  .sb-main { flex: 1; min-width: calc(420px * var(--k)); padding: 0 calc(36px * var(--k)); display: flex; flex-direction: column; justify-content: center;
+             gap: calc(8px * var(--k)); white-space: nowrap; }
+  .sb-label { font-size: calc(26px * var(--k)); font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+  .sb-title { font-size: calc(58px * var(--k)); font-weight: 650; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; }
+  .sb-next { font-size: calc(34px * var(--k)); color: var(--sb-muted); overflow: hidden; text-overflow: ellipsis; }
+  .sb-next:empty { display: none; }
+  .sb-next b { color: var(--sb-fg); font-weight: 600; }
+  .sb-cell { flex: none; padding: 0 calc(36px * var(--k)); display: flex; flex-direction: column; justify-content: center; align-items: flex-end;
+             border-left: 1px solid var(--sb-line); }
+  .sb-cell[hidden] { display: none; }
+  .sb-sub { font-size: calc(24px * var(--k)); font-weight: 600; color: var(--sb-muted); letter-spacing: .12em; text-transform: uppercase; }
+  .sb-time { font-size: calc(156px * var(--k)); font-weight: 750; line-height: 1; letter-spacing: -.02em; }
+  .sb-clock { background: var(--sb-cell); }
+  .sb-clock .sb-time { font-size: calc(128px * var(--k)); font-weight: 650; }
+  .sb-progress { position: absolute; left: calc(12px * var(--k)); right: 0; bottom: 0; height: calc(8px * var(--k)); background: var(--sb-line); }
+  .sb-progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 1s linear; }
+  .sb-progress.warn i { background: var(--warn); }
+  .sb-progress.over i { background: var(--over); }
+
   /* ---------------- Big countdown ---------------- */
   #cd { display: flex; align-items: center; justify-content: center; }
   .cd-wrap { text-align: center; padding: 60px 120px; border-radius: 28px; background: var(--bg); min-width: 1100px; }
@@ -129,6 +164,18 @@
   .ck-item .b { font-size: 34px; font-weight: 700; }
   .ck-item[hidden] { display: none; }
 
+  /* ---------------- Timer + clock: like "clock", but counter and clock swapped (counter big) ---------------- */
+  .tm-box { position: absolute; right: 72px; top: 60px; background: var(--bg); border-radius: 14px; overflow: hidden;
+            display: flex; align-items: stretch; box-shadow: 0 18px 50px rgba(0,0,0,.35);
+            opacity: 0; transition: opacity .4s ease; }
+  .tm-box.show { opacity: 1; }
+  .tm-time { font-size: 64px; font-weight: 700; padding: 18px 34px; line-height: 1; display: flex; align-items: center; }
+  .tm-time[hidden], .tm-item[hidden], .tm-item > [hidden] { display: none; }
+  .tm-item { padding: 16px 30px; border-left: 1px solid rgba(255,255,255,.12); display: flex; flex-direction: column; justify-content: center; max-width: 760px; }
+  .tm-time[hidden] + .tm-item { border-left: 0; }
+  .tm-item .a { font-size: 28px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tm-item .b { font-size: 34px; font-weight: 700; }
+
   /* ---------------- Status (only shown when something is wrong) ---------------- */
   #status { position: absolute; left: 24px; top: 24px; padding: 10px 18px; border-radius: 10px;
             background: rgba(200, 30, 30, .9); font-size: 22px; display: none; }
@@ -155,6 +202,27 @@
         <div class="lt-clock-time mono" id="ltClockTime">00:00:00</div>
       </div>
       <div class="lt-progress" id="ltProg"><i></i></div>
+    </div>
+  </section>
+
+  <!-- Stage banner -->
+  <section class="view" id="sb">
+    <div class="sb-box" id="sbBox">
+      <div class="sb-accent"></div>
+      <div class="sb-main">
+        <div class="sb-label" id="sbLabel">Jetzt</div>
+        <div class="sb-title" id="sbTitle">–</div>
+        <div class="sb-next" id="sbNext"></div>
+      </div>
+      <div class="sb-cell" id="sbTimer">
+        <div class="sb-sub" id="sbSub">verbleibend</div>
+        <div class="sb-time mono" id="sbTime">0:00</div>
+      </div>
+      <div class="sb-cell sb-clock" id="sbClock">
+        <div class="sb-sub" id="sbClockSub">Uhrzeit</div>
+        <div class="sb-time mono" id="sbClockTime">00:00</div>
+      </div>
+      <div class="sb-progress" id="sbProg"><i></i></div>
     </div>
   </section>
 
@@ -205,6 +273,17 @@
     </div>
   </section>
 
+  <!-- Timer + clock (counter big, current item + clock beside it) -->
+  <section class="view" id="tm">
+    <div class="tm-box" id="tmBox">
+      <div class="tm-time mono" id="tmTime">0:00</div>
+      <div class="tm-item" id="tmItem">
+        <div class="a" id="tmTitle"></div>
+        <div class="b mono" id="tmClock">00:00:00</div>
+      </div>
+    </div>
+  </section>
+
   <div id="status"></div>
 </div>
 
@@ -235,7 +314,7 @@
   const tr = k => (I18N[lang] || I18N.de)[k] || k;
 
   const $ = id => document.getElementById(id);
-  const VIEWS = { lowerthird: "lt", countdown: "cd", list: "ls", service: "sv", clock: "ck" };
+  const VIEWS = { lowerthird: "lt", stage: "sb", countdown: "cd", list: "ls", service: "sv", clock: "ck", timer: "tm" };
 
   let state = null;
   let clockOffset = 0;      // server time - local time
@@ -244,6 +323,9 @@
 
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const now = () => Date.now() + clockOffset;
+  /* whole seconds from a to b, counted on clock-second boundaries -> every timer ticks
+     exactly together with the seconds of the clock */
+  const secsBetween = (a, b) => Math.floor(b / 1000) - Math.floor(a / 1000);
 
   function fmt(sec, { sign = false } = {}) {
     const neg = sec < 0;
@@ -273,10 +355,12 @@
   /** Remaining seconds of the current item (negative = overtime). */
   function itemTiming(cur) {
     if (!cur || !cur.start) return null;
-    const elapsed = (now() - cur.start) / 1000;
+    const t = now();
+    const elapsed = secsBetween(cur.start, t);
     if (!cur.length) return { elapsed, remaining: null, pct: 0 };
-    const remaining = cur.length - elapsed;
-    return { elapsed, remaining, pct: Math.max(0, Math.min(100, elapsed / cur.length * 100)) };
+    const remaining = Math.round(cur.length) - elapsed;
+    const exact = (t - cur.start) / 1000; // progress bar stays smooth
+    return { elapsed, remaining, pct: Math.max(0, Math.min(100, exact / cur.length * 100)) };
   }
 
   function timeClass(rem, warn) {
@@ -284,6 +368,16 @@
     if (rem < 0) return "over";
     if (rem <= warn) return "warn";
     return "";
+  }
+
+  /* long texts: shrink the font (down to min ratio) before cutting with an ellipsis */
+  function fitText(el, minRatio = 0.6) {
+    if (!el) return;
+    el.style.fontSize = "";
+    const sw = el.scrollWidth, cw = el.clientWidth;
+    if (!cw || sw <= cw) return;
+    const base = parseFloat(getComputedStyle(el).fontSize);
+    el.style.fontSize = Math.max(base * minRatio, Math.floor(base * cw / sw * 10) / 10) + "px";
   }
 
   function setCls(el, cls) {
@@ -295,7 +389,7 @@
   function preService(s) {
     const up = s.live && s.live.upcoming_service;
     if (!up || !up.starts_at) return null;
-    const secs = (up.starts_at - now()) / 1000;
+    const secs = secsBetween(now(), up.starts_at);
     const winMin = s.config ? s.config.preservice_minutes : 30;
     if (secs < 0 || secs > winMin * 60) return null;
     return { secs, svc: up };
@@ -343,6 +437,56 @@
     if (ltClockOn)
       $("ltClockTime").textContent = new Date(now()).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     box.classList.toggle("show", show);
+    if (show) { fitText($("ltTitle")); fitText($("ltNext")); }
+  }
+
+  /* stage banner: always visible (clock), timer cell only while an item / pre-service countdown runs */
+  function renderStage(s) {
+    const cfg = s.config || {};
+    const live = s.live || {};
+    const cur = live.current;
+    const pre = preService(s);
+    const prog = $("sbProg");
+    let timer = true;
+    prog.style.display = "none";
+
+    if (live.active && cur) {
+      const t = itemTiming(cur);
+      $("sbLabel").textContent = tr("now");
+      $("sbTitle").textContent = cur.title || "–";
+      const nx = live.next;
+      $("sbNext").innerHTML = cfg.show_next && nx ? `${tr("next")} <b>${esc(nx.title)}</b>${nx.length ? " · " + len(nx.length) : ""}` : "";
+      if (t && t.remaining != null) {
+        $("sbTime").textContent = fmt(t.remaining);
+        $("sbSub").textContent = t.remaining < 0 ? tr("over") : tr("left");
+        const c = timeClass(t.remaining, cfg.warn_seconds);
+        setCls($("sbTime"), c); setCls(prog, c);
+        prog.querySelector("i").style.width = t.pct + "%";
+        if (cfg.show_progress) prog.style.display = "";
+      } else {
+        $("sbTime").textContent = t ? fmt(t.elapsed) : "–";
+        $("sbSub").textContent = tr("since");
+        setCls($("sbTime"), "");
+      }
+    } else if (pre) {
+      $("sbLabel").textContent = pre.svc.name || tr("service");
+      $("sbTitle").textContent = tr("startsAt") + " " + hhmm(pre.svc.starts_at);
+      $("sbNext").textContent = s.plan ? [s.plan.series_title, s.plan.title].filter(Boolean).join(" – ") : "";
+      $("sbTime").textContent = fmt(pre.secs);
+      $("sbSub").textContent = tr("toStart");
+      setCls($("sbTime"), "");
+    } else {
+      timer = false;
+      const plan = s.plan || {};
+      $("sbLabel").textContent = plan.dates || "Planning Center";
+      $("sbTitle").textContent = [plan.series_title, plan.title].filter(Boolean).join(" – ") || (s.plan ? "Planning Center" : tr("noPlan"));
+      $("sbNext").textContent = "";
+    }
+    $("sbTimer").hidden = !timer;
+    fitText($("sbTitle")); fitText($("sbNext"));
+    $("sbClockSub").textContent = tr("time");
+    $("sbClockTime").textContent = new Date(now()).toLocaleTimeString("de-CH",
+      cfg.stage_seconds === false ? { hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 
   function renderCountdown(s) {
@@ -433,14 +577,14 @@
     // LIVE is often started during the pre-service items -> elapsed time counts from the scheduled start
     if (live.active && run && run.starts_at && now() >= run.starts_at) {
       $("svLabel").textContent = (run.name || tr("service")) + " " + tr("since");
-      $("svTime").textContent = fmt((now() - run.starts_at) / 1000);
+      $("svTime").textContent = fmt(secsBetween(run.starts_at, now()));
       $("svSub").innerHTML = run.ends_at ? `${tr("plannedEnd")} <b>${hhmm(run.ends_at)}</b>` : "";
     } else if (live.active && run && run.starts_at) {
       $("svLabel").textContent = (run.name || tr("service")) + " " + tr("startsIn");
-      $("svTime").textContent = fmt((run.starts_at - now()) / 1000);
+      $("svTime").textContent = fmt(secsBetween(now(), run.starts_at));
       $("svSub").innerHTML = `${tr("start")} <b>${hhmm(run.starts_at)}</b>`;
     } else if (up && up.starts_at) {
-      const secs = (up.starts_at - now()) / 1000;
+      const secs = secsBetween(now(), up.starts_at);
       $("svLabel").textContent = (up.name || tr("service")) + " " + tr("startsIn");
       $("svTime").textContent = fmt(Math.max(0, secs));
       $("svSub").innerHTML = `${tr("start")} <b>${hhmm(up.starts_at)}</b>`;
@@ -466,6 +610,37 @@
     }
   }
 
+  /* timer + clock: like renderClock, but the remaining time is the big number and the clock sits
+     under the current item. Clock can be hidden; without LIVE only the clock (or nothing) remains. */
+  function renderTimer(s) {
+    const cfg = s.config || {};
+    const live = s.live || {};
+    const pre = preService(s);
+    const clockOn = cfg.timer_clock !== false;
+    let timer = true, title = "";
+    if (live.active && live.current) {
+      const t = itemTiming(live.current);
+      title = live.current.title || "";
+      $("tmTime").textContent = t && t.remaining != null ? fmt(t.remaining) : (t ? fmt(t.elapsed) : "–");
+      setCls($("tmTime"), t ? timeClass(t.remaining, cfg.warn_seconds) : "");
+    } else if (pre) {
+      title = tr("startsAt") + " " + hhmm(pre.svc.starts_at);
+      $("tmTime").textContent = fmt(pre.secs);
+      setCls($("tmTime"), "");
+    } else {
+      timer = false;
+    }
+    $("tmTime").hidden = !timer;
+    $("tmTitle").textContent = title;
+    $("tmTitle").hidden = !title;
+    $("tmClock").hidden = !clockOn;
+    if (clockOn)
+      $("tmClock").textContent = new Date(now()).toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    $("tmItem").hidden = !title && !clockOn;
+    $("tmBox").classList.toggle("show", timer || clockOn);
+    if (title) fitText($("tmTitle"));
+  }
+
   function render() {
     const s = state;
     const st = $("status");
@@ -482,10 +657,12 @@
     st.classList.toggle("show", !!err && (document.body.classList.contains("opaque") || view === "list"));
 
     if (view === "lowerthird") renderLowerThird(s);
+    else if (view === "stage") renderStage(s);
     else if (view === "countdown") renderCountdown(s);
     else if (view === "list") renderList(s);
     else if (view === "service") renderService(s);
     else if (view === "clock") renderClock(s);
+    else if (view === "timer") renderTimer(s);
   }
 
   /* settings that come from the OBS source (plugin) or the Python script */
@@ -499,6 +676,10 @@
     const inset = side + (1920 - 2 * side) * (1 - widthPct / 100) / 2;
     root.setProperty("--lt-left", inset + "px");
     root.setProperty("--lt-right", inset + "px");
+    root.setProperty("--lt-side", side + "px");
+    const sh = qs.get("stageheight") ? parseInt(qs.get("stageheight"), 10) : (cfg.stage_height || 240);
+    $("sbBox").style.setProperty("--k", Math.max(0.4, sh / 240));
+    $("sbBox").classList.toggle("light", qs.get("stagelight") ? qs.get("stagelight") === "1" : !!cfg.stage_light);
     const h = qs.get("ltheight") ? parseInt(qs.get("ltheight"), 10) : (cfg.lt_height || 64);
     $("ltBox").style.setProperty("--k", Math.max(0.5, h / 64));
     ltClockOn = qs.get("ltclock") ? qs.get("ltclock") === "1" : cfg.lt_clock !== false;
@@ -524,7 +705,8 @@
   } else {
     setInterval(() => { if (lastEvent && Date.now() - lastEvent > 5000) failCount = 99; }, 1000);
   }
-  setInterval(() => { if (state) applyConfig(state.config); render(); }, 200);
+  // 100 ms: second changes appear at most 0.1 s late, clock and timers in the same frame
+  setInterval(() => { if (state) applyConfig(state.config); render(); }, 100);
 })();
 </script>
 </body>

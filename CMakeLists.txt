@@ -24,7 +24,7 @@ endif()
 
 # HTTP: WinHTTP on Windows, libcurl (system) on macOS / Linux
 if(WIN32)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE winhttp)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE winhttp shell32)
 else()
   find_package(CURL REQUIRED)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE CURL::libcurl)
@@ -39,6 +39,8 @@ target_sources(
     src/pco-data.cpp
     src/pco-data.hpp
     src/pco-source.cpp
+    src/update-check.cpp
+    src/update-check.hpp
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
