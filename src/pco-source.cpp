@@ -374,6 +374,8 @@ static void fill_service_types(obs_property_t *list, const std::string &current)
 static bool load_service_types_clicked(obs_properties_t *props, obs_property_t *, void *data)
 {
 	PcoSource *s = static_cast<PcoSource *>(data);
+	if (!s)
+		return false;
 	obs_data_t *settings = obs_source_get_settings(s->self);
 	std::string app = obs_data_get_string(settings, "app_id");
 	std::string secret = obs_data_get_string(settings, "secret");
@@ -401,6 +403,8 @@ static bool load_service_types_clicked(obs_properties_t *props, obs_property_t *
 static bool refresh_clicked(obs_properties_t *props, obs_property_t *, void *data)
 {
 	PcoSource *s = static_cast<PcoSource *>(data);
+	if (!s)
+		return false;
 	std::string status;
 	{
 		std::lock_guard<std::mutex> lock(s->mtx);
@@ -457,7 +461,7 @@ static obs_properties_t *pco_properties(void *data)
 		obs_data_release(settings);
 		fill_service_types(st, current);
 	}
-	obs_properties_add_button(cp, "load_types", T("ServiceType.Load"), load_service_types_clicked);
+	obs_properties_add_button2(cp, "load_types", T("ServiceType.Load"), load_service_types_clicked, s);
 	obs_property_t *plan = obs_properties_add_text(cp, "plan_id", T("PlanId"), OBS_TEXT_DEFAULT);
 	obs_property_set_long_description(plan, T("PlanId.Tooltip"));
 	obs_properties_add_int(cp, "poll_seconds", T("PollSeconds"), 1, 30, 1);
@@ -469,7 +473,7 @@ static obs_properties_t *pco_properties(void *data)
 			status += s->feed->status();
 	}
 	obs_properties_add_text(cp, "status", status.c_str(), OBS_TEXT_INFO);
-	obs_properties_add_button(cp, "refresh", T("Refresh"), refresh_clicked);
+	obs_properties_add_button2(cp, "refresh", T("Refresh"), refresh_clicked, s);
 	obs_properties_add_group(props, "connection", T("Group.Connection"), OBS_GROUP_NORMAL, cp);
 
 	return props;
